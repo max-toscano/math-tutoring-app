@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "MathHelper",
+    "slug": "mathhelper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "mathhelper",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mathhelper.app"
+    },
+    "android": {
+      "package": "com.mathhelper.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#6C63FF"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-system-ui"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
