@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build / output
+dist/
+*.tsbuildinfo
+
+# iii / Motia runtime data
+data/
+
+# OS / editor
+.DS_Store
+*.log
+.vscode/
+.idea/
