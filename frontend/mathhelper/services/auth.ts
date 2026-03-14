@@ -1,5 +1,6 @@
 /**
  * Auth service — wraps Supabase Auth for sign-up, sign-in, sign-out.
+ * Profile creation is handled here (not via database trigger).
  */
 import { supabase } from '../lib/supabase';
 import type { Session, User } from '@supabase/supabase-js';
@@ -15,6 +16,21 @@ export async function signUp(email: string, password: string, displayName?: stri
     },
   });
   if (error) throw error;
+
+  // Create profile row (trigger was unreliable, so we do it here)
+  if (data.user) {
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        display_name: displayName ?? email,
+      }, { onConflict: 'id' });
+
+    if (profileError) {
+      console.warn('Failed to create profile:', profileError.message);
+    }
+  }
+
   return data;
 }
 
@@ -24,6 +40,25 @@ export async function signIn(email: string, password: string) {
     password,
   });
   if (error) throw error;
+
+  // Ensure profile exists on login too (in case it was missed)
+  if (data.user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', data.user.id)
+      .single();
+
+    if (!profile) {
+      await supabase
+        .from('profiles')
+        .upsert({
+          id: data.user.id,
+          display_name: data.user.user_metadata?.display_name ?? data.user.email,
+        }, { onConflict: 'id' });
+    }
+  }
+
   return data;
 }
 

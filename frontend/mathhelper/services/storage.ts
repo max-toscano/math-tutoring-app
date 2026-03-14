@@ -29,7 +29,7 @@ export async function uploadImage(
     contentType = (fileBody as Blob).type || contentType;
   } else {
     // React Native: read as base64, convert to ArrayBuffer
-    const FS = await import('expo-file-system');
+    const FS = require('expo-file-system');
     const base64 = await FS.readAsStringAsync(localUri, {
       encoding: FS.EncodingType.Base64,
     });

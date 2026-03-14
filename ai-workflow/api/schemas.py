@@ -1,25 +1,11 @@
 """
 schemas.py
 Pydantic request/response models for all API endpoints.
+user_id is no longer in request bodies — it comes from the JWT token.
 """
 
 from pydantic import BaseModel
-from typing import Optional
-
-
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
-class RegisterRequest(BaseModel):
-    display_name: Optional[str] = None
-    email: Optional[str] = None
-    device_id: Optional[str] = None
-
-class UserResponse(BaseModel):
-    id: str
-    display_name: Optional[str]
-    email: Optional[str]
+from typing import Optional, Any
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +20,6 @@ class Message(BaseModel):
     content: str
 
 class TutorRequest(BaseModel):
-    user_id: Optional[str] = None
     student_input: str
     subject: str = "math"
     mode: str = "direct"
@@ -51,7 +36,7 @@ class Assessment(BaseModel):
 class TutorResponse(BaseModel):
     subject: str
     mode: str
-    response: str
+    response: str = ""
     response_text: Optional[str] = None
     assessment: Optional[Assessment] = None
     conversation_history: list[Message] = []
@@ -100,26 +85,11 @@ class SubjectDetailResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SaveItemRequest(BaseModel):
-    user_id: str
-    subject: Optional[str] = None
-    topic: Optional[str] = None
-    difficulty: Optional[str] = None
-    problem: Optional[str] = None
-    answer: Optional[str] = None
-    steps: Optional[str] = None       # JSON string
-    concepts: Optional[str] = None     # JSON string
-    source: str = "scan"
-    image_uri: Optional[str] = None
+    image_url: str
+    analysis: dict[str, Any]
 
 class SavedItemResponse(BaseModel):
     id: str
-    subject: Optional[str]
-    topic: Optional[str]
-    difficulty: Optional[str]
-    problem: Optional[str]
-    answer: Optional[str]
-    steps: Optional[str]
-    concepts: Optional[str]
-    source: str
-    image_uri: Optional[str]
+    image_url: str
+    analysis: dict[str, Any]
     created_at: str

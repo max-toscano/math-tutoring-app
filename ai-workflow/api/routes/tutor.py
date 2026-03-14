@@ -6,6 +6,7 @@ stores the interaction in the DB, and returns the result.
 
 import json
 import os
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from openai import OpenAI
 from db.database import get_db
 from db.models import Interaction
 from api.schemas import TutorRequest, TutorResponse, Assessment, VALID_SUBJECTS, VALID_MODES
+from api.auth_middleware import get_current_user_id
 from prompts.system_prompt import build_system_prompt
 
 router = APIRouter(prefix="/tutor", tags=["tutor"])
@@ -49,7 +51,11 @@ def _call_llm(system_prompt: str, student_input: str, image_base64: str | None =
 
 
 @router.post("/respond", response_model=TutorResponse)
-def tutor_respond(req: TutorRequest, db: Session = Depends(get_db)):
+def tutor_respond(
+    req: TutorRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     """Accept student input, get AI tutoring response, store interaction."""
     subject = req.subject.lower().strip()
     mode = req.mode.lower().strip()
@@ -77,7 +83,7 @@ def tutor_respond(req: TutorRequest, db: Session = Depends(get_db)):
 
     # Store interaction in DB
     interaction = Interaction(
-        user_id=req.user_id,
+        user_id=user_id,
         subject=subject,
         topic=assessment.topic,
         mode=mode,
@@ -86,7 +92,7 @@ def tutor_respond(req: TutorRequest, db: Session = Depends(get_db)):
         is_correct=assessment.is_correct,
         mistake_type=assessment.mistake_type,
         difficulty=assessment.difficulty,
-        concepts=json.dumps(assessment.concepts),
+        concepts=assessment.concepts,
     )
     db.add(interaction)
     db.commit()

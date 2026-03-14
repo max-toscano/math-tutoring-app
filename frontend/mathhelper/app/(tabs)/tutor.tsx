@@ -66,7 +66,7 @@ export default function TutorScreen() {
       const assistantMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: result.response,
+        content: result.response_text ?? result.response ?? '',
       };
 
       setMessages((prev) => [...prev, assistantMsg]);

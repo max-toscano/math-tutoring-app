@@ -7,7 +7,7 @@
  */
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import type { Database } from './database.types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -19,11 +19,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+// AsyncStorage only works in a client environment (not during SSR)
+let storage: any = undefined;
+if (typeof window !== 'undefined') {
+  // Dynamic import to avoid SSR issues with AsyncStorage
+  storage = require('@react-native-async-storage/async-storage').default;
+}
+
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: AsyncStorage,
+    storage,
     autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false, // not needed in React Native
+    persistSession: typeof window !== 'undefined',
+    detectSessionInUrl: false,
   },
 });

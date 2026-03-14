@@ -181,7 +181,7 @@ export default function DashboardScreen() {
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: tutorResult.response,
+          content: tutorResult.response_text ?? tutorResult.response ?? '',
         };
         setChatMessages((prev) => [...prev, assistantMsg]);
         setConversationHistory(tutorResult.conversation_history);
@@ -203,7 +203,7 @@ export default function DashboardScreen() {
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: result.response,
+          content: result.response_text ?? result.response ?? '',
         };
         setChatMessages((prev) => [...prev, assistantMsg]);
         setConversationHistory(result.conversation_history);

@@ -4,12 +4,15 @@ Performance tracking endpoints. All metrics are computed queries
 over the interactions table — no separate stats table needed.
 """
 
-from fastapi import APIRouter, Depends, Query
+from uuid import UUID
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
 from db.database import get_db
 from db.models import Interaction
+from api.auth_middleware import get_current_user_id
 from api.schemas import (
     ProgressSummaryResponse, SubjectSummary, WeakArea,
     SubjectDetailResponse, TopicBreakdown, MistakeCount,
@@ -22,7 +25,7 @@ MIN_ATTEMPTS = 3
 
 
 @router.get("/summary", response_model=ProgressSummaryResponse)
-def get_summary(user_id: str = Query(...), db: Session = Depends(get_db)):
+def get_summary(user_id: UUID = Depends(get_current_user_id), db: Session = Depends(get_db)):
     """Per-subject accuracy, total interactions, and weak areas."""
 
     # Per-subject accuracy
@@ -83,7 +86,11 @@ def get_summary(user_id: str = Query(...), db: Session = Depends(get_db)):
 
 
 @router.get("/subject/{subject}", response_model=SubjectDetailResponse)
-def get_subject_detail(subject: str, user_id: str = Query(...), db: Session = Depends(get_db)):
+def get_subject_detail(
+    subject: str,
+    user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     """Per-topic breakdown within a single subject."""
 
     # Per-topic accuracy
@@ -149,7 +156,7 @@ def get_subject_detail(subject: str, user_id: str = Query(...), db: Session = De
 
 
 @router.get("/weak-areas", response_model=list[WeakArea])
-def get_weak_areas(user_id: str = Query(...), db: Session = Depends(get_db)):
+def get_weak_areas(user_id: UUID = Depends(get_current_user_id), db: Session = Depends(get_db)):
     """Topics where the student scores below 60% with at least 3 attempts."""
 
     rows = (

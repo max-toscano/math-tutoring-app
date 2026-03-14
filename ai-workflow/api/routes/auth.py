@@ -1,52 +1,29 @@
 """
 auth.py
-Minimal user registration and login.
+Profile endpoint — auth is handled by Supabase on the frontend.
+The backend just validates the JWT and returns the user's profile.
 """
+
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db.database import get_db
-from db.models import User
-from api.schemas import RegisterRequest, UserResponse
+from db.models import Profile
+from api.auth_middleware import get_current_user_id
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserResponse)
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    """Create a new user. Accepts display_name, email, or device_id."""
-    if req.email:
-        existing = db.query(User).filter(User.email == req.email).first()
-        if existing:
-            raise HTTPException(400, "Email already registered")
-
-    if req.device_id:
-        existing = db.query(User).filter(User.device_id == req.device_id).first()
-        if existing:
-            return UserResponse(id=existing.id, display_name=existing.display_name, email=existing.email)
-
-    user = User(
-        display_name=req.display_name,
-        email=req.email,
-        device_id=req.device_id,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return UserResponse(id=user.id, display_name=user.display_name, email=user.email)
-
-
-@router.post("/login", response_model=UserResponse)
-def login(req: RegisterRequest, db: Session = Depends(get_db)):
-    """Look up a user by email or device_id."""
-    user = None
-    if req.email:
-        user = db.query(User).filter(User.email == req.email).first()
-    elif req.device_id:
-        user = db.query(User).filter(User.device_id == req.device_id).first()
-
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    return UserResponse(id=user.id, display_name=user.display_name, email=user.email)
+@router.get("/me")
+def get_me(user_id: UUID = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Return the authenticated user's profile."""
+    profile = db.query(Profile).filter(Profile.id == user_id).first()
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+    return {
+        "id": str(profile.id),
+        "display_name": profile.display_name,
+        "grade_level": profile.grade_level,
+    }

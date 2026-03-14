@@ -79,7 +79,7 @@ async function imageUriToBase64(uri: string): Promise<{ base64: string; mimeType
       reader.readAsDataURL(blob);
     });
   } else {
-    const FileSystem = await import('expo-file-system');
+    const FileSystem = require('expo-file-system');
     const base64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });

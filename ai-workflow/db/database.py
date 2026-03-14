@@ -1,19 +1,18 @@
 """
 database.py
 SQLAlchemy engine, session factory, and base model.
-Uses SQLite for development — swap DATABASE_URL to PostgreSQL for production.
+Connects to Supabase PostgreSQL — tables are managed via Supabase migrations.
 """
 
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tutoring.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-)
+engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -29,8 +28,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def init_db():
-    """Create all tables. Call once at startup."""
-    Base.metadata.create_all(bind=engine)
