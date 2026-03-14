@@ -29,12 +29,17 @@ class UserResponse(BaseModel):
 VALID_SUBJECTS = {"math", "chemistry", "physics", "biology"}
 VALID_MODES = {"direct", "socratic", "hint", "check_work"}
 
+class Message(BaseModel):
+    role: str
+    content: str
+
 class TutorRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None
     student_input: str
     subject: str = "math"
     mode: str = "direct"
     image_base64: Optional[str] = None
+    conversation_history: Optional[list[Message]] = None
 
 class Assessment(BaseModel):
     is_correct: Optional[bool] = None
@@ -46,8 +51,10 @@ class Assessment(BaseModel):
 class TutorResponse(BaseModel):
     subject: str
     mode: str
-    response_text: str
-    assessment: Assessment
+    response: str
+    response_text: Optional[str] = None
+    assessment: Optional[Assessment] = None
+    conversation_history: list[Message] = []
 
 
 # ---------------------------------------------------------------------------

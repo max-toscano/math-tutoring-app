@@ -5,164 +5,129 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  Modal,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  Animated,
+  Alert,
 } from 'react-native';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { analyzeMathImage, type MathAnalysis } from '../../services/openai';
-import { useAppContext } from '../../context/AppContext';
+import { sendTutoringMessage, type Message } from '../../services/tutoring';
+import { useAppContext, type TutoringSession } from '../../context/AppContext';
 import { Colors } from '../../constants/Colors';
 
-const QUICK_TOPICS = [
-  { name: 'Algebra', icon: 'calculator-outline', color: Colors.primary },
-  { name: 'Geometry', icon: 'shapes-outline', color: Colors.teal },
-  { name: 'Calculus', icon: 'trending-up-outline', color: Colors.secondary },
-  { name: 'Trigonometry', icon: 'radio-outline', color: Colors.orange },
-  { name: 'Statistics', icon: 'bar-chart-outline', color: Colors.green },
-];
-
-const DIFF_COLORS: Record<string, string> = {
-  Easy: Colors.green,
-  Medium: Colors.orange,
-  Hard: Colors.secondary,
-};
-
-// ─── Analysis Results ─────────────────────────────────────────────────────────
-function AnalysisResults({
-  result,
-  onDismiss,
-  onSave,
-  saved,
-}: {
-  result: MathAnalysis;
-  onDismiss: () => void;
-  onSave: () => void;
-  saved: boolean;
-}) {
-  const diffColor = DIFF_COLORS[result.difficulty] ?? Colors.orange;
-
-  return (
-    <View style={rs.container}>
-      {/* Header */}
-      <View style={rs.header}>
-        <View style={rs.headerLeft}>
-          <Ionicons name="sparkles" size={17} color={Colors.primary} />
-          <Text style={rs.headerTitle}>AI Analysis Complete</Text>
-        </View>
-        <TouchableOpacity onPress={onDismiss} style={rs.dismissBtn}>
-          <Ionicons name="close" size={17} color={Colors.textLight} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Problem */}
-      <View style={rs.problemBox}>
-        <Text style={rs.sectionLabel}>PROBLEM DETECTED</Text>
-        <Text style={rs.problemText}>{result.problem}</Text>
-        <View style={rs.badgeRow}>
-          <View style={[rs.badge, { backgroundColor: Colors.primaryLight }]}>
-            <Text style={[rs.badgeText, { color: Colors.primary }]}>{result.topic}</Text>
-          </View>
-          <View style={[rs.badge, { backgroundColor: diffColor + '22' }]}>
-            <Text style={[rs.badgeText, { color: diffColor }]}>{result.difficulty}</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Answer */}
-      <View style={rs.answerBox}>
-        <Text style={[rs.sectionLabel, { color: Colors.green }]}>ANSWER</Text>
-        <Text style={rs.answerText}>{result.answer}</Text>
-      </View>
-
-      {/* Steps */}
-      <Text style={rs.stepsHeading}>Step-by-Step Solution</Text>
-      {result.steps.map((s) => (
-        <View key={s.step} style={rs.stepRow}>
-          <View style={rs.stepBubble}>
-            <Text style={rs.stepBubbleText}>{s.step}</Text>
-          </View>
-          <View style={rs.stepBody}>
-            <Text style={rs.stepTitle}>{s.title}</Text>
-            <Text style={rs.stepExplanation}>{s.explanation}</Text>
-            {s.math ? (
-              <View style={rs.mathBox}>
-                <Text style={rs.mathText}>{s.math}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      ))}
-
-      {/* Concepts */}
-      {result.concepts?.length > 0 && (
-        <View style={rs.conceptsSection}>
-          <Text style={rs.conceptsHeading}>Key Concepts</Text>
-          <View style={rs.conceptsPills}>
-            {result.concepts.map((c, i) => (
-              <View key={i} style={rs.pill}>
-                <Text style={rs.pillText}>{c}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Tip */}
-      {result.tip ? (
-        <View style={rs.tipBox}>
-          <Ionicons name="bulb-outline" size={18} color={Colors.yellow} />
-          <Text style={rs.tipText}>{result.tip}</Text>
-        </View>
-      ) : null}
-
-      {/* Save Button */}
-      <TouchableOpacity
-        style={[rs.saveBtn, saved && rs.saveBtnSaved]}
-        onPress={onSave}
-        disabled={saved}
-        activeOpacity={0.8}
-      >
-        <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={18} color={saved ? Colors.white : Colors.primary} />
-        <Text style={[rs.saveBtnText, saved && rs.saveBtnTextSaved]}>
-          {saved ? 'Saved to Collection' : 'Save to Collection'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  imageUri?: string;
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function formatSessionDate(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function generateSessionTitle(messages: ChatMessage[], analysis?: MathAnalysis | null): string {
+  if (analysis?.problem) {
+    return analysis.problem.length > 50
+      ? analysis.problem.slice(0, 47) + '...'
+      : analysis.problem;
+  }
+  const firstUserMsg = messages.find((m) => m.role === 'user');
+  if (firstUserMsg?.content && firstUserMsg.content !== 'Sent a photo') {
+    return firstUserMsg.content.length > 50
+      ? firstUserMsg.content.slice(0, 47) + '...'
+      : firstUserMsg.content;
+  }
+  return 'Tutoring Session';
+}
+
+function generateSessionPreview(messages: ChatMessage[]): string {
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+  if (lastAssistant) {
+    return lastAssistant.content.length > 80
+      ? lastAssistant.content.slice(0, 77) + '...'
+      : lastAssistant.content;
+  }
+  return 'No response yet';
+}
+
+// ─── Dashboard ───────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { savedItems, saveAnalysis } = useAppContext();
+  const scrollRef = useRef<ScrollView>(null);
+  const { savedItems, saveAnalysis, sessions, saveSession, deleteSession } = useAppContext();
 
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [previewVisible, setPreviewVisible] = useState(false);
+  // Photo state
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<MathAnalysis | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [isSaved, setIsSaved] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
 
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
+  // Session state
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionSaved, setSessionSaved] = useState(false);
+  const [savingSession, setSavingSession] = useState(false);
+
+  // Attach menu state
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+
+  // Animated dot indicator for "thinking"
+  const dotAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (chatLoading || analyzing) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dotAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    }
+  }, [chatLoading, analyzing]);
+
+  const chatActive = chatMessages.length > 0 || analyzing;
+
+  // ── Photo handlers ──
   async function handleTakePhoto() {
+    setAttachMenuOpen(false);
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') return;
     const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.9 });
     if (!result.canceled) {
-      setPhotoUri(result.assets[0].uri);
-      setAnalysisResult(null);
-      setAnalysisError(null);
-      setIsSaved(false);
-      setPreviewVisible(true);
+      setPendingPhoto(result.assets[0].uri);
     }
   }
 
   async function handleUploadPhoto() {
+    setAttachMenuOpen(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -171,53 +136,158 @@ export default function DashboardScreen() {
       quality: 0.9,
     });
     if (!result.canceled) {
-      setPhotoUri(result.assets[0].uri);
-      setAnalysisResult(null);
-      setAnalysisError(null);
-      setIsSaved(false);
-      setPreviewVisible(true);
+      setPendingPhoto(result.assets[0].uri);
     }
   }
 
-  async function handleAnalyze() {
-    if (!photoUri) return;
-    setPreviewVisible(false);
-    setAnalyzing(true);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setIsSaved(false);
+  // ── Send message (text, photo, or both) ──
+  async function handleSend() {
+    const text = chatInput.trim();
+    const photo = pendingPhoto;
+
+    if ((!text && !photo) || chatLoading || analyzing) return;
+
+    const userMsg: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text || (photo ? 'Sent a photo' : ''),
+      imageUri: photo ?? undefined,
+    };
+
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput('');
+    setPendingPhoto(null);
+    setChatError(null);
+    setSessionSaved(false);
+
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+
+    if (photo) {
+      setAnalyzing(true);
+      setChatLoading(true);
+      try {
+        const analysis = await analyzeMathImage(photo);
+        setAnalysisResult(analysis);
+
+        const problemPrompt = text
+          ? `I have this math problem: ${analysis.problem}\n\nMy question: ${text}`
+          : `I have this math problem: ${analysis.problem}\n\nPlease help me solve it step by step. Don't just give me the answer — teach me how to work through it.`;
+
+        const tutorResult = await sendTutoringMessage(problemPrompt, {
+          subject: 'math',
+          mode: 'direct',
+        });
+
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: tutorResult.response,
+        };
+        setChatMessages((prev) => [...prev, assistantMsg]);
+        setConversationHistory(tutorResult.conversation_history);
+      } catch (e: any) {
+        setChatError(e.message ?? 'Something went wrong. Please try again.');
+      } finally {
+        setAnalyzing(false);
+        setChatLoading(false);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 200);
+      }
+    } else {
+      setChatLoading(true);
+      try {
+        const result = await sendTutoringMessage(text, {
+          subject: 'math',
+          conversationHistory,
+        });
+
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.response,
+        };
+        setChatMessages((prev) => [...prev, assistantMsg]);
+        setConversationHistory(result.conversation_history);
+      } catch (e: any) {
+        setChatError(e.message ?? 'Something went wrong.');
+      } finally {
+        setChatLoading(false);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 200);
+      }
+    }
+  }
+
+  // ── Save session ──
+  async function handleSaveSession() {
+    if (chatMessages.length === 0 || savingSession) return;
+    setSavingSession(true);
     try {
-      const result = await analyzeMathImage(photoUri);
-      setAnalysisResult(result);
+      const title = generateSessionTitle(chatMessages, analysisResult);
+      const preview = generateSessionPreview(chatMessages);
+      const photoUri = chatMessages.find((m) => m.imageUri)?.imageUri;
+
+      const id = await saveSession({
+        title,
+        preview,
+        messages: chatMessages,
+        conversationHistory,
+        analysis: analysisResult ?? undefined,
+        photoUri,
+      });
+
+      setCurrentSessionId(id);
+      setSessionSaved(true);
     } catch (e: any) {
-      setAnalysisError(e.message ?? 'Something went wrong. Please try again.');
+      Alert.alert('Save Failed', e.message ?? 'Could not save session.');
     } finally {
-      setAnalyzing(false);
+      setSavingSession(false);
     }
   }
 
-  async function handleSave() {
-    if (!photoUri || !analysisResult || isSaved) return;
-    setIsSaving(true);
-    try {
-      await saveAnalysis(photoUri, analysisResult);
-      setIsSaved(true);
-    } catch {
-      // silently fail — user can retry
-    } finally {
-      setIsSaving(false);
+  // ── Resume a saved session ──
+  function handleResumeSession(session: TutoringSession) {
+    resetAll();
+    setChatMessages(session.messages as ChatMessage[]);
+    setConversationHistory(session.conversationHistory);
+    setAnalysisResult(session.analysis ?? null);
+    setCurrentSessionId(session.id);
+    setSessionSaved(true);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 100);
+  }
+
+  // ── Delete session with confirmation (cross-platform) ──
+  function handleDeleteSession(id: string) {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to delete this session?')) {
+        deleteSession(id);
+      }
+    } else {
+      Alert.alert(
+        'Delete Session',
+        'Are you sure you want to delete this session?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => deleteSession(id) },
+        ]
+      );
     }
   }
 
-  function handleClearPhoto() {
-    setPhotoUri(null);
-    setPreviewVisible(false);
+  function resetAll() {
+    setPendingPhoto(null);
     setAnalysisResult(null);
-    setAnalysisError(null);
-    setIsSaved(false);
+    setChatMessages([]);
+    setConversationHistory([]);
+    setChatInput('');
+    setChatError(null);
+    setChatLoading(false);
+    setAnalyzing(false);
+    setCurrentSessionId(null);
+    setSessionSaved(false);
+    setAttachMenuOpen(false);
   }
 
   const recentSaved = savedItems.slice(0, 3);
+  const recentSessions = sessions.slice(0, 5);
   const uniqueTopics = [...new Set(savedItems.map((i) => i.analysis.topic))].length;
 
   return (
@@ -226,224 +296,470 @@ export default function DashboardScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.greeting}>Math Helper 📚</Text>
-            <Text style={styles.subGreeting}>Scan a problem to get started</Text>
+            <Text style={styles.greeting}>Math Helper</Text>
+            <Text style={styles.subGreeting}>
+              {chatActive ? 'Tutoring session' : 'Scan or ask anything'}
+            </Text>
           </View>
-          <TouchableOpacity style={styles.avatarBtn}>
-            <View style={styles.avatar}>
-              <Ionicons name="person" size={20} color={Colors.white} />
+          {chatActive ? (
+            <View style={styles.headerActions}>
+              {/* Save button */}
+              <TouchableOpacity
+                style={[styles.headerActionBtn, sessionSaved && styles.headerActionBtnSaved]}
+                onPress={handleSaveSession}
+                disabled={sessionSaved || savingSession || chatMessages.length === 0}
+                activeOpacity={0.7}
+              >
+                {savingSession ? (
+                  <ActivityIndicator size="small" color={Colors.white} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={sessionSaved ? 'checkmark-circle' : 'bookmark-outline'}
+                      size={16}
+                      color={Colors.white}
+                    />
+                    <Text style={styles.headerActionText}>
+                      {sessionSaved ? 'Saved' : 'Save'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              {/* Exit button */}
+              <TouchableOpacity style={[styles.headerActionBtn, styles.headerActionBtnExit]} onPress={resetAll}>
+                <Ionicons name="close-outline" size={18} color={Colors.white} />
+                <Text style={styles.headerActionText}>Exit</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.avatarBtn}>
+              <View style={styles.avatar}>
+                <Ionicons name="person" size={20} color={Colors.white} />
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-
-        {/* ── Stats ── */}
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <View style={[styles.statIconWrap, { backgroundColor: Colors.primary + '20' }]}>
-              <Ionicons name="bookmark" size={20} color={Colors.primary} />
-            </View>
-            <Text style={styles.statValue}>{savedItems.length}</Text>
-            <Text style={styles.statLabel}>Saved</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={[styles.statIconWrap, { backgroundColor: Colors.teal + '20' }]}>
-              <Ionicons name="layers" size={20} color={Colors.teal} />
-            </View>
-            <Text style={styles.statValue}>{uniqueTopics}</Text>
-            <Text style={styles.statLabel}>Topics</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={[styles.statIconWrap, { backgroundColor: Colors.green + '20' }]}>
-              <Ionicons name="scan" size={20} color={Colors.green} />
-            </View>
-            <Text style={styles.statValue}>{savedItems.length}</Text>
-            <Text style={styles.statLabel}>Scanned</Text>
-          </View>
-        </View>
-
-        {/* ── Scan a Problem ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Scan a Problem</Text>
-          <View style={styles.photoWidget}>
-            {photoUri ? (
-              <View>
-                <TouchableOpacity onPress={() => setPreviewVisible(true)} activeOpacity={0.9}>
-                  <Image source={{ uri: photoUri }} style={styles.photoThumb} resizeMode="cover" />
-                  <View style={styles.photoOverlay}>
-                    <Ionicons name="expand-outline" size={20} color={Colors.white} />
-                    <Text style={styles.photoOverlayText}>Tap to expand</Text>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── Home View ── */}
+          {!chatActive && (
+            <>
+              {/* Stats */}
+              <View style={styles.statsRow}>
+                <View style={styles.statCard}>
+                  <View style={[styles.statIconWrap, { backgroundColor: Colors.primary + '20' }]}>
+                    <Ionicons name="bookmark" size={20} color={Colors.primary} />
                   </View>
-                </TouchableOpacity>
-                <View style={styles.photoActions}>
-                  <TouchableOpacity style={styles.photoRemoveBtn} onPress={handleClearPhoto}>
-                    <Ionicons name="trash-outline" size={15} color={Colors.textLight} />
-                    <Text style={styles.photoRemoveText}>Remove</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.analyzeBtn, analyzing && styles.analyzeBtnDisabled]}
-                    onPress={handleAnalyze}
-                    disabled={analyzing}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="sparkles" size={15} color={Colors.white} />
-                    <Text style={styles.analyzeBtnText}>Analyze Problem</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.statValue}>{savedItems.length}</Text>
+                  <Text style={styles.statLabel}>Saved</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <View style={[styles.statIconWrap, { backgroundColor: Colors.teal + '20' }]}>
+                    <Ionicons name="chatbubbles" size={20} color={Colors.teal} />
+                  </View>
+                  <Text style={styles.statValue}>{sessions.length}</Text>
+                  <Text style={styles.statLabel}>Sessions</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <View style={[styles.statIconWrap, { backgroundColor: Colors.green + '20' }]}>
+                    <Ionicons name="layers" size={20} color={Colors.green} />
+                  </View>
+                  <Text style={styles.statValue}>{uniqueTopics}</Text>
+                  <Text style={styles.statLabel}>Topics</Text>
                 </View>
               </View>
-            ) : (
-              <View style={styles.photoUploadArea}>
-                <View style={styles.photoUploadIcon}>
-                  <Ionicons name="scan-outline" size={36} color={Colors.primary} />
-                </View>
-                <Text style={styles.photoUploadTitle}>Upload your math problem</Text>
-                <Text style={styles.photoUploadSub}>Take a photo or choose from your gallery</Text>
-                <View style={styles.photoButtonRow}>
-                  <TouchableOpacity style={styles.photoCameraBtn} onPress={handleTakePhoto} activeOpacity={0.8}>
-                    <Ionicons name="camera" size={18} color={Colors.white} />
-                    <Text style={styles.photoCameraBtnText}>Take Photo</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.photoGalleryBtn} onPress={handleUploadPhoto} activeOpacity={0.8}>
-                    <Ionicons name="images-outline" size={18} color={Colors.primary} />
-                    <Text style={styles.photoGalleryBtnText}>Upload</Text>
-                  </TouchableOpacity>
+
+              {/* ── Scan Card ── */}
+              <View style={styles.scanCard}>
+                {pendingPhoto ? (
+                  /* Photo selected — show preview + actions */
+                  <View>
+                    <Image source={{ uri: pendingPhoto }} style={styles.scanPreviewImage} resizeMode="cover" />
+                    <View style={styles.scanPreviewOverlay}>
+                      <Ionicons name="checkmark-circle" size={18} color={Colors.white} />
+                      <Text style={styles.scanPreviewOverlayText}>Photo ready</Text>
+                    </View>
+                    <View style={styles.scanPreviewActions}>
+                      <TouchableOpacity style={styles.scanRemoveBtn} onPress={() => setPendingPhoto(null)} activeOpacity={0.7}>
+                        <Ionicons name="trash-outline" size={16} color={Colors.secondary} />
+                        <Text style={styles.scanRemoveBtnText}>Remove</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.scanSolveBtn}
+                        onPress={handleSend}
+                        disabled={chatLoading || analyzing}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="sparkles" size={16} color={Colors.white} />
+                        <Text style={styles.scanSolveBtnText}>Solve with AI</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  /* No photo — show upload area */
+                  <View style={styles.scanUploadArea}>
+                    <View style={styles.scanIconRow}>
+                      <View style={styles.scanIconCircle}>
+                        <Ionicons name="scan-outline" size={32} color={Colors.primary} />
+                      </View>
+                    </View>
+                    <Text style={styles.scanTitle}>Scan your math problem</Text>
+                    <Text style={styles.scanSub}>
+                      Take a photo or choose from your library and the AI will help you solve it
+                    </Text>
+                    <View style={styles.scanButtonRow}>
+                      <TouchableOpacity style={styles.scanCameraBtn} onPress={handleTakePhoto} activeOpacity={0.8}>
+                        <Ionicons name="camera" size={20} color={Colors.white} />
+                        <Text style={styles.scanCameraBtnText}>Take Photo</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.scanGalleryBtn} onPress={handleUploadPhoto} activeOpacity={0.8}>
+                        <Ionicons name="images-outline" size={20} color={Colors.primary} />
+                        <Text style={styles.scanGalleryBtnText}>Photo Library</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {/* Quick Questions */}
+              <View style={styles.quickSection}>
+                <Text style={styles.quickLabel}>Or ask a question</Text>
+                <View style={styles.quickChips}>
+                  {['How do I factor x² - 9?', 'Explain derivatives', 'Check my work'].map((s) => (
+                    <TouchableOpacity
+                      key={s}
+                      style={styles.quickChip}
+                      onPress={() => setChatInput(s)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="chatbubble-outline" size={13} color={Colors.primary} />
+                      <Text style={styles.quickChipText}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
-            )}
-          </View>
-        </View>
 
-        {/* ── Analyzing Spinner ── */}
-        {analyzing && (
-          <View style={styles.section}>
-            <View style={styles.loadingCard}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={styles.loadingTitle}>Analyzing your problem...</Text>
-              <Text style={styles.loadingSub}>MathHelper AI is working on it</Text>
-            </View>
-          </View>
-        )}
-
-        {/* ── Analysis Error ── */}
-        {analysisError && !analyzing && (
-          <View style={styles.section}>
-            <View style={styles.errorCard}>
-              <Ionicons name="alert-circle-outline" size={28} color={Colors.secondary} />
-              <Text style={styles.errorText}>{analysisError}</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={handleAnalyze}>
-                <Ionicons name="refresh-outline" size={15} color={Colors.primary} />
-                <Text style={styles.retryBtnText}>Try Again</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* ── Analysis Results ── */}
-        {analysisResult && !analyzing && (
-          <View style={styles.section}>
-            <AnalysisResults
-              result={analysisResult}
-              onDismiss={() => setAnalysisResult(null)}
-              onSave={handleSave}
-              saved={isSaved}
-            />
-          </View>
-        )}
-
-        {/* ── Quick Practice ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Practice</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.topicPills}>
-              {QUICK_TOPICS.map((t) => (
-                <TouchableOpacity
-                  key={t.name}
-                  style={[styles.topicPill, { backgroundColor: t.color + '15', borderColor: t.color + '40' }]}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name={t.icon as any} size={15} color={t.color} />
-                  <Text style={[styles.topicPillText, { color: t.color }]}>{t.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
-        </View>
-
-        {/* ── Recently Saved ── */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recently Saved</Text>
-            {savedItems.length > 0 && (
-              <TouchableOpacity onPress={() => router.push('/(tabs)/saved')}>
-                <Text style={styles.seeAll}>See all</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {recentSaved.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="bookmark-outline" size={36} color={Colors.textMuted} />
-              <Text style={styles.emptyStateTitle}>No saved problems yet</Text>
-              <Text style={styles.emptyStateSub}>
-                Scan a problem above and tap "Save to Collection"
-              </Text>
-            </View>
-          ) : (
-            recentSaved.map((item) => (
-              <View key={item.id} style={styles.recentCard}>
-                <Image source={{ uri: item.imageUri }} style={styles.recentThumb} resizeMode="cover" />
-                <View style={styles.recentInfo}>
-                  <View style={[styles.topicBadge, { backgroundColor: Colors.primary + '18' }]}>
-                    <Text style={[styles.topicBadgeText, { color: Colors.primary }]}>
-                      {item.analysis.topic}
+              {/* ── Saved Sessions ── */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recent Sessions</Text>
+                </View>
+                {recentSessions.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="chatbubbles-outline" size={32} color={Colors.textMuted} />
+                    <Text style={styles.emptyStateTitle}>No sessions yet</Text>
+                    <Text style={styles.emptyStateSub}>
+                      Start a conversation and save it to pick up later
                     </Text>
                   </View>
-                  <Text style={styles.recentProblem} numberOfLines={2}>
-                    {item.analysis.problem}
-                  </Text>
-                  <Text style={styles.recentAnswer} numberOfLines={1}>
-                    {item.analysis.answer}
-                  </Text>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
+                ) : (
+                  recentSessions.map((session) => (
+                    <TouchableOpacity
+                      key={session.id}
+                      style={styles.sessionCard}
+                      onPress={() => handleResumeSession(session)}
+                      activeOpacity={0.7}
+                    >
+                      {/* Left accent */}
+                      <View style={styles.sessionAccent} />
 
-      {/* ── Full-screen Photo Preview Modal ── */}
-      <Modal visible={previewVisible} transparent animationType="fade" onRequestClose={() => setPreviewVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Problem Photo</Text>
-              <TouchableOpacity onPress={() => setPreviewVisible(false)} style={styles.modalCloseBtn}>
-                <Ionicons name="close" size={22} color={Colors.text} />
+                      {/* Content */}
+                      <View style={styles.sessionContent}>
+                        <View style={styles.sessionTopRow}>
+                          <Text style={styles.sessionTitle} numberOfLines={1}>
+                            {session.title}
+                          </Text>
+                          <Text style={styles.sessionDate}>
+                            {formatSessionDate(session.updatedAt)}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.sessionPreview} numberOfLines={2}>
+                          {session.preview}
+                        </Text>
+
+                        <View style={styles.sessionMeta}>
+                          <View style={styles.sessionMetaPill}>
+                            <Ionicons name="chatbubble-outline" size={11} color={Colors.primary} />
+                            <Text style={styles.sessionMetaText}>
+                              {session.messages.length} messages
+                            </Text>
+                          </View>
+                          {session.analysis && (
+                            <View style={[styles.sessionMetaPill, { backgroundColor: Colors.teal + '15' }]}>
+                              <Ionicons name="school-outline" size={11} color={Colors.teal} />
+                              <Text style={[styles.sessionMetaText, { color: Colors.teal }]}>
+                                {session.analysis.topic}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Delete */}
+                      <TouchableOpacity
+                        style={styles.sessionDeleteBtn}
+                        onPress={() => handleDeleteSession(session.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <Ionicons name="trash-outline" size={16} color={Colors.textMuted} />
+                      </TouchableOpacity>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+
+              {/* Recently Saved Problems */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recently Saved</Text>
+                  {savedItems.length > 0 && (
+                    <TouchableOpacity onPress={() => router.push('/(tabs)/saved')}>
+                      <Text style={styles.seeAll}>See all</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {recentSaved.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="bookmark-outline" size={32} color={Colors.textMuted} />
+                    <Text style={styles.emptyStateTitle}>No saved problems yet</Text>
+                    <Text style={styles.emptyStateSub}>
+                      Your solved problems will appear here
+                    </Text>
+                  </View>
+                ) : (
+                  recentSaved.map((item) => (
+                    <View key={item.id} style={styles.recentCard}>
+                      <Image source={{ uri: item.imageUri }} style={styles.recentThumb} resizeMode="cover" />
+                      <View style={styles.recentInfo}>
+                        <View style={[styles.topicBadge, { backgroundColor: Colors.primary + '18' }]}>
+                          <Text style={[styles.topicBadgeText, { color: Colors.primary }]}>{item.analysis.topic}</Text>
+                        </View>
+                        <Text style={styles.recentProblem} numberOfLines={2}>{item.analysis.problem}</Text>
+                        <Text style={styles.recentAnswer} numberOfLines={1}>{item.analysis.answer}</Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            </>
+          )}
+
+          {/* ── Chat View ── */}
+          {chatActive && (
+            <View style={styles.chatArea}>
+              {/* Analysis badge */}
+              {analysisResult && (
+                <View style={styles.analysisBadge}>
+                  <View style={styles.analysisBadgeIcon}>
+                    <Ionicons name="checkmark-circle" size={16} color={Colors.green} />
+                  </View>
+                  <View style={styles.analysisBadgeContent}>
+                    <Text style={styles.analysisBadgeLabel}>
+                      {analysisResult.topic} · {analysisResult.difficulty}
+                    </Text>
+                    <Text style={styles.analysisBadgeText} numberOfLines={2}>
+                      {analysisResult.problem}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Session saved indicator */}
+              {sessionSaved && (
+                <View style={styles.savedIndicator}>
+                  <Ionicons name="checkmark-circle" size={14} color={Colors.green} />
+                  <Text style={styles.savedIndicatorText}>Session saved</Text>
+                </View>
+              )}
+
+              {/* Messages */}
+              {chatMessages.map((msg) => (
+                <View
+                  key={msg.id}
+                  style={[
+                    styles.messageBubble,
+                    msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                  ]}
+                >
+                  {msg.role === 'assistant' && (
+                    <View style={styles.tutorAvatar}>
+                      <Ionicons name="school" size={14} color={Colors.primary} />
+                    </View>
+                  )}
+                  <View
+                    style={[
+                      styles.bubbleContent,
+                      msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
+                    ]}
+                  >
+                    {msg.imageUri && (
+                      <Image
+                        source={{ uri: msg.imageUri }}
+                        style={styles.bubbleImage}
+                        resizeMode="cover"
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.bubbleText,
+                        msg.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
+                      ]}
+                    >
+                      {msg.content}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+
+              {/* Thinking indicator */}
+              {(chatLoading || analyzing) && (
+                <View style={[styles.messageBubble, styles.assistantBubble]}>
+                  <View style={styles.tutorAvatar}>
+                    <Ionicons name="school" size={14} color={Colors.primary} />
+                  </View>
+                  <View style={[styles.bubbleContent, styles.assistantBubbleContent]}>
+                    <View style={styles.thinkingRow}>
+                      <Animated.View style={[styles.thinkingDot, { opacity: dotAnim }]} />
+                      <Text style={styles.thinkingText}>
+                        {analyzing ? 'Reading your problem...' : 'Thinking...'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Error */}
+              {chatError && (
+                <View style={styles.chatErrorCard}>
+                  <Ionicons name="alert-circle-outline" size={16} color={Colors.secondary} />
+                  <Text style={styles.chatErrorText}>{chatError}</Text>
+                  <TouchableOpacity onPress={handleSend}>
+                    <Text style={styles.retryText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+        </ScrollView>
+
+        {/* ── AI Input Bar ── */}
+        <View style={[styles.inputBarWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {/* Attachment menu */}
+          {attachMenuOpen && !pendingPhoto && (
+            <View style={styles.attachMenu}>
+              <TouchableOpacity
+                style={styles.attachOption}
+                onPress={handleTakePhoto}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.attachOptionIcon, { backgroundColor: Colors.teal + '18' }]}>
+                  <Ionicons name="camera" size={22} color={Colors.teal} />
+                </View>
+                <View>
+                  <Text style={styles.attachOptionTitle}>Take Photo</Text>
+                  <Text style={styles.attachOptionSub}>Use your camera</Text>
+                </View>
+              </TouchableOpacity>
+              <View style={styles.attachDivider} />
+              <TouchableOpacity
+                style={styles.attachOption}
+                onPress={handleUploadPhoto}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.attachOptionIcon, { backgroundColor: Colors.primary + '18' }]}>
+                  <Ionicons name="images" size={22} color={Colors.primary} />
+                </View>
+                <View>
+                  <Text style={styles.attachOptionTitle}>Photo Library</Text>
+                  <Text style={styles.attachOptionSub}>Choose from gallery</Text>
+                </View>
               </TouchableOpacity>
             </View>
-            {photoUri && <Image source={{ uri: photoUri }} style={styles.modalImage} resizeMode="contain" />}
-            <View style={styles.modalFooter}>
-              <TouchableOpacity style={styles.modalAnalyzeBtn} onPress={handleAnalyze}>
-                <Ionicons name="sparkles" size={16} color={Colors.white} />
-                <Text style={styles.modalAnalyzeBtnText}>Analyze This Problem</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalRemoveBtn} onPress={handleClearPhoto}>
-                <Ionicons name="trash-outline" size={15} color={Colors.secondary} />
-                <Text style={styles.modalRemoveBtnText}>Remove</Text>
+          )}
+
+          {/* Pending photo preview */}
+          {pendingPhoto && (
+            <View style={styles.photoPreviewRow}>
+              <Image source={{ uri: pendingPhoto }} style={styles.photoPreviewThumb} resizeMode="cover" />
+              <View style={styles.photoPreviewInfo}>
+                <Ionicons name="image" size={14} color={Colors.primary} />
+                <Text style={styles.photoPreviewText}>Photo attached</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.photoPreviewRemove}
+                onPress={() => setPendingPhoto(null)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close-circle" size={20} color={Colors.textMuted} />
               </TouchableOpacity>
             </View>
+          )}
+
+          {/* Input row */}
+          <View style={styles.inputRow}>
+            {/* Attach / close button */}
+            <TouchableOpacity
+              style={[styles.attachBtn, attachMenuOpen && styles.attachBtnActive]}
+              onPress={() => setAttachMenuOpen((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={attachMenuOpen ? 'close' : 'add'}
+                size={24}
+                color={attachMenuOpen ? Colors.white : Colors.primary}
+              />
+            </TouchableOpacity>
+
+            <TextInput
+              style={styles.textInput}
+              value={chatInput}
+              onChangeText={setChatInput}
+              placeholder={pendingPhoto ? 'Add instructions (optional)...' : 'Ask about your math problem...'}
+              placeholderTextColor={Colors.textMuted}
+              multiline
+              maxLength={2000}
+              onSubmitEditing={handleSend}
+              blurOnSubmit={false}
+              onFocus={() => setAttachMenuOpen(false)}
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.sendBtn,
+                (!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing
+                  ? styles.sendBtnDisabled
+                  : null,
+              ]}
+              onPress={handleSend}
+              disabled={(!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-up" size={20} color={Colors.white} />
+            </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
+  // Header
   header: {
     backgroundColor: Colors.primary,
     paddingHorizontal: 20,
@@ -454,6 +770,19 @@ const styles = StyleSheet.create({
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   greeting: { fontSize: 22, fontWeight: '700', color: Colors.white, marginBottom: 4 },
   subGreeting: { fontSize: 14, color: 'rgba(255,255,255,0.75)' },
+  headerActions: { flexDirection: 'row', gap: 8 },
+  headerActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
+  },
+  headerActionBtnSaved: {
+    backgroundColor: 'rgba(46,204,113,0.35)',
+  },
+  headerActionBtnExit: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  headerActionText: { color: Colors.white, fontWeight: '600', fontSize: 13 },
   avatarBtn: {},
   avatar: {
     width: 42, height: 42, borderRadius: 21,
@@ -461,11 +790,13 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)',
   },
+
+  // Scroll
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 32 },
+  scrollContent: { padding: 16, paddingBottom: 8 },
 
   // Stats
-  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 24 },
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   statCard: {
     flex: 1, backgroundColor: Colors.card, borderRadius: 16,
     padding: 14, alignItems: 'center', gap: 6,
@@ -475,99 +806,124 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
   statLabel: { fontSize: 11, color: Colors.textLight, fontWeight: '500' },
 
+  // Scan Card
+  scanCard: {
+    backgroundColor: Colors.card, borderRadius: 20, overflow: 'hidden', marginBottom: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
+  },
+  // Upload area (no photo)
+  scanUploadArea: {
+    alignItems: 'center', paddingVertical: 28, paddingHorizontal: 24, gap: 10,
+  },
+  scanIconRow: { marginBottom: 4 },
+  scanIconCircle: {
+    width: 72, height: 72, borderRadius: 22,
+    backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: Colors.primary + '20',
+  },
+  scanTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
+  scanSub: { fontSize: 14, color: Colors.textLight, textAlign: 'center', lineHeight: 20 },
+  scanButtonRow: { flexDirection: 'row', gap: 12, marginTop: 8, width: '100%' },
+  scanCameraBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary, paddingVertical: 14, borderRadius: 14,
+  },
+  scanCameraBtnText: { color: Colors.white, fontWeight: '700', fontSize: 15 },
+  scanGalleryBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primaryLight, paddingVertical: 14, borderRadius: 14,
+    borderWidth: 1.5, borderColor: Colors.primary + '30',
+  },
+  scanGalleryBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 15 },
+  // Preview state (photo selected)
+  scanPreviewImage: { width: '100%', height: 200 },
+  scanPreviewOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, height: 200,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-start',
+    paddingHorizontal: 14, paddingBottom: 12, gap: 6,
+  },
+  scanPreviewOverlayText: { color: Colors.white, fontSize: 13, fontWeight: '600' },
+  scanPreviewActions: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 12, gap: 12,
+    borderTopWidth: 1, borderTopColor: Colors.border,
+  },
+  scanRemoveBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
+    backgroundColor: Colors.secondary + '12',
+    borderWidth: 1, borderColor: Colors.secondary + '25',
+  },
+  scanRemoveBtnText: { fontSize: 14, fontWeight: '600', color: Colors.secondary },
+  scanSolveBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary, paddingVertical: 12, borderRadius: 12,
+  },
+  scanSolveBtnText: { color: Colors.white, fontWeight: '700', fontSize: 15 },
+
+  // Quick questions
+  quickSection: { marginBottom: 20 },
+  quickLabel: { fontSize: 13, fontWeight: '600', color: Colors.textLight, marginBottom: 10 },
+  quickChips: { gap: 8 },
+  quickChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.card, borderRadius: 12, padding: 13,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  quickChipText: { fontSize: 14, color: Colors.primary, fontWeight: '500' },
+
   // Sections
   section: { marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: Colors.text, marginBottom: 12 },
-  seeAll: { fontSize: 14, color: Colors.primary, fontWeight: '600', marginBottom: 12 },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+  seeAll: { fontSize: 14, color: Colors.primary, fontWeight: '600' },
 
-  // Photo Widget
-  photoWidget: {
-    backgroundColor: Colors.card, borderRadius: 16, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 2,
-  },
-  photoUploadArea: {
-    alignItems: 'center', paddingVertical: 30, paddingHorizontal: 20, gap: 8,
-    borderWidth: 2, borderColor: Colors.primary + '30', borderStyle: 'dashed', borderRadius: 16,
-  },
-  photoUploadIcon: {
-    width: 68, height: 68, borderRadius: 18,
-    backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 4,
-  },
-  photoUploadTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
-  photoUploadSub: { fontSize: 13, color: Colors.textLight, textAlign: 'center', marginBottom: 8 },
-  photoButtonRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
-  photoCameraBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.primary, paddingHorizontal: 20, paddingVertical: 11, borderRadius: 12,
-  },
-  photoCameraBtnText: { color: Colors.white, fontWeight: '700', fontSize: 14 },
-  photoGalleryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.primaryLight, paddingHorizontal: 20, paddingVertical: 11,
-    borderRadius: 12, borderWidth: 1, borderColor: Colors.primary + '40',
-  },
-  photoGalleryBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 14 },
-  photoThumb: { width: '100%', height: 200 },
-  photoOverlay: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: 52,
-    backgroundColor: 'rgba(0,0,0,0.42)',
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-  },
-  photoOverlayText: { color: Colors.white, fontSize: 13, fontWeight: '600' },
-  photoActions: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 12,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-  },
-  photoRemoveBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: Colors.background,
-  },
-  photoRemoveText: { fontSize: 13, color: Colors.textLight, fontWeight: '500' },
-  analyzeBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 7,
-    backgroundColor: Colors.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12,
-  },
-  analyzeBtnDisabled: { opacity: 0.5 },
-  analyzeBtnText: { color: Colors.white, fontWeight: '700', fontSize: 14 },
-
-  // Loading / Error
-  loadingCard: {
-    backgroundColor: Colors.card, borderRadius: 16, padding: 32,
-    alignItems: 'center', gap: 14,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
-  },
-  loadingTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
-  loadingSub: { fontSize: 13, color: Colors.textLight },
-  errorCard: {
-    backgroundColor: Colors.card, borderRadius: 16, padding: 24,
-    alignItems: 'center', gap: 12,
-    borderWidth: 1, borderColor: Colors.secondary + '30',
-  },
-  errorText: { fontSize: 14, color: Colors.text, textAlign: 'center', lineHeight: 20 },
-  retryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.primaryLight, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9,
-  },
-  retryBtnText: { fontSize: 14, fontWeight: '600', color: Colors.primary },
-
-  // Quick Practice
-  topicPills: { flexDirection: 'row', gap: 10, paddingRight: 16 },
-  topicPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 9, borderRadius: 24, borderWidth: 1,
-  },
-  topicPillText: { fontSize: 13, fontWeight: '600' },
-
-  // Recently Saved
+  // Empty state
   emptyState: {
-    backgroundColor: Colors.card, borderRadius: 16, padding: 32,
-    alignItems: 'center', gap: 10,
+    backgroundColor: Colors.card, borderRadius: 16, padding: 28,
+    alignItems: 'center', gap: 8,
     borderWidth: 1, borderColor: Colors.border, borderStyle: 'dashed',
   },
   emptyStateTitle: { fontSize: 15, fontWeight: '700', color: Colors.textLight },
   emptyStateSub: { fontSize: 13, color: Colors.textMuted, textAlign: 'center' },
+
+  // ── Session Cards ──
+  sessionCard: {
+    backgroundColor: Colors.card, borderRadius: 14,
+    flexDirection: 'row', overflow: 'hidden', marginBottom: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
+  },
+  sessionAccent: {
+    width: 4, backgroundColor: Colors.primary,
+  },
+  sessionContent: {
+    flex: 1, padding: 14, gap: 6,
+  },
+  sessionTopRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+  },
+  sessionTitle: {
+    flex: 1, fontSize: 14, fontWeight: '700', color: Colors.text, marginRight: 8,
+  },
+  sessionDate: { fontSize: 11, color: Colors.textMuted },
+  sessionPreview: {
+    fontSize: 13, color: Colors.textLight, lineHeight: 18,
+  },
+  sessionMeta: {
+    flexDirection: 'row', gap: 8, marginTop: 2,
+  },
+  sessionMetaPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.primaryLight, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  sessionMetaText: { fontSize: 11, fontWeight: '600', color: Colors.primary },
+  sessionDeleteBtn: {
+    justifyContent: 'center', paddingHorizontal: 14,
+  },
+
+  // Recent problem cards
   recentCard: {
     backgroundColor: Colors.card, borderRadius: 14,
     flexDirection: 'row', overflow: 'hidden', marginBottom: 10,
@@ -580,112 +936,137 @@ const styles = StyleSheet.create({
   recentProblem: { fontSize: 13, color: Colors.text, fontWeight: '500', lineHeight: 18 },
   recentAnswer: { fontSize: 12, color: Colors.textLight },
 
-  // Modal
-  modalOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
-    justifyContent: 'center', alignItems: 'center', padding: 20,
-  },
-  modalCard: {
-    backgroundColor: Colors.card, borderRadius: 20,
-    width: '100%', maxWidth: 500, overflow: 'hidden',
-  },
-  modalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 16,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
-  },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: Colors.text },
-  modalCloseBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center',
-  },
-  modalImage: { width: '100%', height: 320, backgroundColor: Colors.background },
-  modalFooter: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 16, borderTopWidth: 1, borderTopColor: Colors.border,
-  },
-  modalAnalyzeBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 12,
-  },
-  modalAnalyzeBtnText: { color: Colors.white, fontWeight: '700', fontSize: 15 },
-  modalRemoveBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 12,
-    borderRadius: 12, backgroundColor: Colors.secondary + '15',
-  },
-  modalRemoveBtnText: { fontSize: 14, color: Colors.secondary, fontWeight: '600' },
-});
+  // ── Chat Area ──
+  chatArea: { paddingBottom: 8 },
 
-// ─── Analysis Results Styles ──────────────────────────────────────────────────
-const rs = StyleSheet.create({
-  container: {
-    backgroundColor: Colors.card, borderRadius: 16, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.09, shadowRadius: 12, elevation: 4,
+  // Saved indicator
+  savedIndicator: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 8, marginBottom: 12,
+    backgroundColor: Colors.green + '12', borderRadius: 10,
   },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 16, backgroundColor: Colors.primaryLight,
-    borderBottomWidth: 1, borderBottomColor: Colors.primary + '25',
+  savedIndicatorText: { fontSize: 12, fontWeight: '600', color: Colors.green },
+
+  // Analysis badge
+  analysisBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.card, borderRadius: 14, padding: 12,
+    marginBottom: 16,
+    borderWidth: 1, borderColor: Colors.green + '30',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { fontSize: 15, fontWeight: '700', color: Colors.primary },
-  dismissBtn: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: Colors.white, alignItems: 'center', justifyContent: 'center',
+  analysisBadgeIcon: {
+    width: 32, height: 32, borderRadius: 10,
+    backgroundColor: Colors.green + '15', alignItems: 'center', justifyContent: 'center',
   },
-  sectionLabel: { fontSize: 10, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1.2 },
-  problemBox: { padding: 16, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 10 },
-  problemText: { fontSize: 16, color: Colors.text, fontWeight: '500', lineHeight: 23 },
-  badgeRow: { flexDirection: 'row', gap: 8 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  badgeText: { fontSize: 12, fontWeight: '700' },
-  answerBox: {
-    margin: 16, backgroundColor: Colors.green + '14', borderRadius: 14,
-    padding: 18, alignItems: 'center', gap: 8,
-    borderWidth: 1, borderColor: Colors.green + '35',
-  },
-  answerText: { fontSize: 24, fontWeight: '700', color: Colors.text, textAlign: 'center' },
-  stepsHeading: { fontSize: 15, fontWeight: '700', color: Colors.text, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12 },
-  stepRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingBottom: 18 },
-  stepBubble: {
+  analysisBadgeContent: { flex: 1 },
+  analysisBadgeLabel: { fontSize: 11, fontWeight: '700', color: Colors.textLight, letterSpacing: 0.5, marginBottom: 2 },
+  analysisBadgeText: { fontSize: 14, fontWeight: '600', color: Colors.text, lineHeight: 20 },
+
+  // Chat bubbles
+  messageBubble: { marginBottom: 14 },
+  userBubble: { alignItems: 'flex-end' },
+  assistantBubble: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  tutorAvatar: {
     width: 30, height: 30, borderRadius: 15,
-    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+    backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center',
+    marginTop: 2,
   },
-  stepBubbleText: { fontSize: 13, fontWeight: '700', color: Colors.white },
-  stepBody: { flex: 1, gap: 5 },
-  stepTitle: { fontSize: 14, fontWeight: '700', color: Colors.text },
-  stepExplanation: { fontSize: 13, color: Colors.textLight, lineHeight: 20 },
-  mathBox: {
-    backgroundColor: Colors.primaryLight, borderLeftWidth: 3, borderLeftColor: Colors.primary,
-    borderRadius: 8, padding: 10, marginTop: 6,
+  bubbleContent: { maxWidth: '80%', borderRadius: 18, padding: 14, overflow: 'hidden' },
+  userBubbleContent: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
+  assistantBubbleContent: {
+    backgroundColor: Colors.card, borderBottomLeftRadius: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
   },
-  mathText: { fontSize: 14, fontFamily: 'monospace', color: Colors.primaryDark, letterSpacing: 0.4 },
-  conceptsSection: { padding: 16, paddingTop: 0, gap: 10 },
-  conceptsHeading: { fontSize: 13, fontWeight: '700', color: Colors.text },
-  conceptsPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  pill: {
-    backgroundColor: Colors.primaryLight, borderRadius: 20,
-    paddingHorizontal: 12, paddingVertical: 5,
-    borderWidth: 1, borderColor: Colors.primary + '30',
+  bubbleImage: {
+    width: '100%', height: 160, borderRadius: 12, marginBottom: 8,
   },
-  pillText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
-  tipBox: {
-    flexDirection: 'row', gap: 10, margin: 16, marginTop: 4,
-    backgroundColor: Colors.yellow + '18', borderRadius: 12, padding: 14,
-    borderWidth: 1, borderColor: Colors.yellow + '40', alignItems: 'flex-start',
+  bubbleText: { fontSize: 15, lineHeight: 22 },
+  userBubbleText: { color: Colors.white },
+  assistantBubbleText: { color: Colors.text },
+
+  // Thinking
+  thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  thinkingDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: Colors.primary,
   },
-  tipText: { flex: 1, fontSize: 13, color: Colors.text, lineHeight: 20 },
-  saveBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    margin: 16, marginTop: 4, paddingVertical: 13, borderRadius: 14,
+  thinkingText: { fontSize: 13, color: Colors.textLight },
+
+  // Chat error
+  chatErrorCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.secondary + '12', borderRadius: 12, padding: 12,
+    marginBottom: 8,
+  },
+  chatErrorText: { flex: 1, fontSize: 13, color: Colors.text },
+  retryText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+
+  // ── AI Input Bar ──
+  inputBarWrap: {
+    backgroundColor: Colors.card,
+    borderTopWidth: 1, borderTopColor: Colors.border,
+    paddingTop: 10,
+    paddingHorizontal: 14,
+  },
+
+  photoPreviewRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: Colors.primaryLight,
-    borderWidth: 1.5, borderColor: Colors.primary,
+    borderRadius: 12, padding: 8,
+    marginBottom: 10,
   },
-  saveBtnSaved: {
-    backgroundColor: Colors.green,
-    borderColor: Colors.green,
+  photoPreviewThumb: {
+    width: 44, height: 44, borderRadius: 8,
   },
-  saveBtnText: { fontSize: 15, fontWeight: '700', color: Colors.primary },
-  saveBtnTextSaved: { color: Colors.white },
+  photoPreviewInfo: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  photoPreviewText: { fontSize: 13, color: Colors.primary, fontWeight: '600' },
+  photoPreviewRemove: { padding: 4 },
+
+  // Attachment menu
+  attachMenu: {
+    backgroundColor: Colors.background, borderRadius: 16,
+    marginBottom: 10, overflow: 'hidden',
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  attachOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  attachOptionIcon: {
+    width: 42, height: 42, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  attachOptionTitle: { fontSize: 15, fontWeight: '600', color: Colors.text },
+  attachOptionSub: { fontSize: 12, color: Colors.textLight, marginTop: 1 },
+  attachDivider: { height: 1, backgroundColor: Colors.border, marginHorizontal: 14 },
+
+  inputRow: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+  },
+  attachBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 1,
+  },
+  attachBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  textInput: {
+    flex: 1, fontSize: 15, color: Colors.text,
+    backgroundColor: Colors.background, borderRadius: 22,
+    paddingHorizontal: 16, paddingVertical: 11,
+    maxHeight: 100, borderWidth: 1, borderColor: Colors.border,
+  },
+  sendBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 1,
+  },
+  sendBtnDisabled: { opacity: 0.35 },
 });

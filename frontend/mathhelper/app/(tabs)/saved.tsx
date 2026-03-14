@@ -6,11 +6,12 @@ import {
   StyleSheet,
   Image,
   Alert,
+  Platform,
 } from 'react-native';
 import { useState, useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppContext, type SavedItem } from '../../context/AppContext';
+import { useAppContext, type SavedItem, type TutoringSession } from '../../context/AppContext';
 import { Colors } from '../../constants/Colors';
 
 const DIFF_COLORS: Record<string, string> = {
@@ -30,28 +31,35 @@ function formatDate(iso: string) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// ─── Tab Selector ─────────────────────────────────────────────────────────────
+type TabKey = 'problems' | 'sessions';
+
 // ─── Expandable Saved Card ────────────────────────────────────────────────────
 function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const diffColor = DIFF_COLORS[item.analysis.difficulty] ?? Colors.orange;
 
   function confirmDelete() {
-    Alert.alert(
-      'Delete Saved Problem',
-      'Are you sure you want to remove this from your collection?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: onDelete },
-      ]
-    );
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to remove this from your collection?')) {
+        onDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Saved Problem',
+        'Are you sure you want to remove this from your collection?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: onDelete },
+        ]
+      );
+    }
   }
 
   return (
     <View style={styles.card}>
-      {/* Image */}
       <Image source={{ uri: item.imageUri }} style={styles.cardImage} resizeMode="cover" />
 
-      {/* Card Header */}
       <View style={styles.cardBody}>
         <View style={styles.cardTopRow}>
           <View style={styles.badgeRow}>
@@ -65,12 +73,10 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
           <Text style={styles.dateText}>{formatDate(item.savedAt)}</Text>
         </View>
 
-        {/* Problem */}
         <Text style={styles.problemText} numberOfLines={expanded ? undefined : 2}>
           {item.analysis.problem}
         </Text>
 
-        {/* Answer */}
         <View style={styles.answerRow}>
           <View style={styles.answerBox}>
             <Text style={styles.answerLabel}>ANSWER</Text>
@@ -78,13 +84,11 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
           </View>
         </View>
 
-        {/* Expand / Collapse */}
         <TouchableOpacity style={styles.expandBtn} onPress={() => setExpanded((v) => !v)} activeOpacity={0.7}>
           <Text style={styles.expandBtnText}>{expanded ? 'Hide Breakdown' : 'View Full Breakdown'}</Text>
           <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.primary} />
         </TouchableOpacity>
 
-        {/* ── Expanded: Step-by-Step ── */}
         {expanded && (
           <View style={styles.breakdown}>
             <Text style={styles.breakdownTitle}>Step-by-Step Solution</Text>
@@ -105,7 +109,6 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
               </View>
             ))}
 
-            {/* Concepts */}
             {item.analysis.concepts?.length > 0 && (
               <View style={styles.conceptsSection}>
                 <Text style={styles.conceptsHeading}>Key Concepts</Text>
@@ -119,7 +122,6 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
               </View>
             )}
 
-            {/* Tip */}
             {item.analysis.tip ? (
               <View style={styles.tipBox}>
                 <Ionicons name="bulb-outline" size={17} color={Colors.yellow} />
@@ -129,7 +131,6 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
           </View>
         )}
 
-        {/* Delete */}
         <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} activeOpacity={0.7}>
           <Ionicons name="trash-outline" size={15} color={Colors.secondary} />
           <Text style={styles.deleteBtnText}>Remove from Saved</Text>
@@ -139,13 +140,124 @@ function SavedCard({ item, onDelete }: { item: SavedItem; onDelete: () => void }
   );
 }
 
+// ─── Session Card (for Saved tab) ─────────────────────────────────────────────
+function SessionCard({ session, onDelete }: { session: TutoringSession; onDelete: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+
+  function confirmDelete() {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to delete this tutoring session?')) {
+        onDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Session',
+        'Are you sure you want to delete this tutoring session?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: onDelete },
+        ]
+      );
+    }
+  }
+
+  const messageCount = session.messages.length;
+  const userMsgCount = session.messages.filter((m) => m.role === 'user').length;
+  const assistantMsgCount = session.messages.filter((m) => m.role === 'assistant').length;
+
+  return (
+    <View style={styles.card}>
+      {/* Session header bar */}
+      <View style={styles.sessionHeaderBar}>
+        <View style={styles.sessionHeaderIcon}>
+          <Ionicons name="chatbubbles" size={18} color={Colors.primary} />
+        </View>
+        <View style={styles.sessionHeaderInfo}>
+          <Text style={styles.sessionHeaderTitle} numberOfLines={1}>{session.title}</Text>
+          <Text style={styles.sessionHeaderDate}>{formatDate(session.savedAt)}</Text>
+        </View>
+        {session.analysis && (
+          <View style={[styles.badge, { backgroundColor: Colors.primaryLight }]}>
+            <Text style={[styles.badgeText, { color: Colors.primary }]}>{session.analysis.topic}</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.cardBody}>
+        {/* Preview */}
+        <Text style={styles.sessionPreviewText} numberOfLines={expanded ? undefined : 3}>
+          {session.preview}
+        </Text>
+
+        {/* Stats row */}
+        <View style={styles.sessionStatsRow}>
+          <View style={styles.sessionStat}>
+            <Ionicons name="chatbubble-outline" size={13} color={Colors.textLight} />
+            <Text style={styles.sessionStatText}>{messageCount} messages</Text>
+          </View>
+          <View style={styles.sessionStat}>
+            <Ionicons name="person-outline" size={13} color={Colors.textLight} />
+            <Text style={styles.sessionStatText}>{userMsgCount} questions</Text>
+          </View>
+          <View style={styles.sessionStat}>
+            <Ionicons name="school-outline" size={13} color={Colors.textLight} />
+            <Text style={styles.sessionStatText}>{assistantMsgCount} responses</Text>
+          </View>
+        </View>
+
+        {/* Expand to see full conversation */}
+        <TouchableOpacity style={styles.expandBtn} onPress={() => setExpanded((v) => !v)} activeOpacity={0.7}>
+          <Text style={styles.expandBtnText}>{expanded ? 'Hide Conversation' : 'View Conversation'}</Text>
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.primary} />
+        </TouchableOpacity>
+
+        {/* Expanded: full conversation */}
+        {expanded && (
+          <View style={styles.conversationWrap}>
+            {session.messages.map((msg) => (
+              <View
+                key={msg.id}
+                style={[
+                  styles.convBubble,
+                  msg.role === 'user' ? styles.convBubbleUser : styles.convBubbleAssistant,
+                ]}
+              >
+                <View style={styles.convBubbleHeader}>
+                  <Ionicons
+                    name={msg.role === 'user' ? 'person-circle-outline' : 'school-outline'}
+                    size={14}
+                    color={msg.role === 'user' ? Colors.primary : Colors.teal}
+                  />
+                  <Text style={styles.convBubbleRole}>
+                    {msg.role === 'user' ? 'You' : 'Tutor'}
+                  </Text>
+                </View>
+                {msg.imageUri && (
+                  <Image source={{ uri: msg.imageUri }} style={styles.convBubbleImage} resizeMode="cover" />
+                )}
+                <Text style={styles.convBubbleText}>{msg.content}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Delete */}
+        <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} activeOpacity={0.7}>
+          <Ionicons name="trash-outline" size={15} color={Colors.secondary} />
+          <Text style={styles.deleteBtnText}>Delete Session</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 // ─── Saved Screen ─────────────────────────────────────────────────────────────
 export default function SavedScreen() {
   const insets = useSafeAreaInsets();
-  const { savedItems, deleteItem } = useAppContext();
+  const { savedItems, deleteItem, sessions, deleteSession } = useAppContext();
+  const [activeTab, setActiveTab] = useState<TabKey>('problems');
   const [activeFilter, setActiveFilter] = useState('All');
 
-  // Build filter options from actual saved topics
   const filters = useMemo(() => {
     const topics = [...new Set(savedItems.map((i) => i.analysis.topic))].sort();
     return ['All', ...topics];
@@ -156,6 +268,8 @@ export default function SavedScreen() {
     return savedItems.filter((i) => i.analysis.topic === activeFilter);
   }, [savedItems, activeFilter]);
 
+  const totalCount = savedItems.length + sessions.length;
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -164,63 +278,127 @@ export default function SavedScreen() {
           <View>
             <Text style={styles.headerTitle}>Saved</Text>
             <Text style={styles.headerSub}>
-              {savedItems.length} problem{savedItems.length !== 1 ? 's' : ''} saved
+              {totalCount} item{totalCount !== 1 ? 's' : ''} saved
             </Text>
           </View>
-          {savedItems.length > 0 && (
+          {totalCount > 0 && (
             <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{savedItems.length}</Text>
+              <Text style={styles.countBadgeText}>{totalCount}</Text>
             </View>
           )}
+        </View>
+
+        {/* Tab switcher */}
+        <View style={styles.tabRow}>
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'problems' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('problems')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name="bookmark"
+              size={15}
+              color={activeTab === 'problems' ? Colors.primary : 'rgba(255,255,255,0.6)'}
+            />
+            <Text style={[styles.tabBtnText, activeTab === 'problems' && styles.tabBtnTextActive]}>
+              Problems ({savedItems.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'sessions' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('sessions')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name="chatbubbles"
+              size={15}
+              color={activeTab === 'sessions' ? Colors.primary : 'rgba(255,255,255,0.6)'}
+            />
+            <Text style={[styles.tabBtnText, activeTab === 'sessions' && styles.tabBtnTextActive]}>
+              Sessions ({sessions.length})
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {savedItems.length === 0 ? (
-        /* ── Empty State ── */
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIconWrap}>
-            <Ionicons name="bookmark-outline" size={48} color={Colors.textMuted} />
-          </View>
-          <Text style={styles.emptyTitle}>Nothing saved yet</Text>
-          <Text style={styles.emptySub}>
-            Scan a math problem on the Dashboard, get the AI analysis, then tap{' '}
-            <Text style={{ fontWeight: '700', color: Colors.primary }}>"Save to Collection"</Text>
-            {' '}to store it here.
-          </Text>
-        </View>
-      ) : (
+      {/* ── Problems Tab ── */}
+      {activeTab === 'problems' && (
         <>
-          {/* ── Filter Pills ── */}
-          {filters.length > 1 && (
-            <View style={styles.filterWrap}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-                {filters.map((f) => (
-                  <TouchableOpacity
-                    key={f}
-                    style={[styles.filterPill, activeFilter === f && styles.filterPillActive]}
-                    onPress={() => setActiveFilter(f)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.filterText, activeFilter === f && styles.filterTextActive]}>{f}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* ── Item List ── */}
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {filtered.length === 0 ? (
-              <View style={styles.emptyFilterState}>
-                <Text style={styles.emptyFilterText}>No {activeFilter} problems saved.</Text>
+          {savedItems.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconWrap}>
+                <Ionicons name="bookmark-outline" size={48} color={Colors.textMuted} />
               </View>
-            ) : (
-              filtered.map((item) => (
-                <SavedCard key={item.id} item={item} onDelete={() => deleteItem(item.id)} />
-              ))
-            )}
-            <View style={{ height: 32 }} />
-          </ScrollView>
+              <Text style={styles.emptyTitle}>Nothing saved yet</Text>
+              <Text style={styles.emptySub}>
+                Scan a math problem on the Dashboard, get the AI analysis, then tap{' '}
+                <Text style={{ fontWeight: '700', color: Colors.primary }}>"Save to Collection"</Text>
+                {' '}to store it here.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {filters.length > 1 && (
+                <View style={styles.filterWrap}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+                    {filters.map((f) => (
+                      <TouchableOpacity
+                        key={f}
+                        style={[styles.filterPill, activeFilter === f && styles.filterPillActive]}
+                        onPress={() => setActiveFilter(f)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.filterText, activeFilter === f && styles.filterTextActive]}>{f}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                {filtered.length === 0 ? (
+                  <View style={styles.emptyFilterState}>
+                    <Text style={styles.emptyFilterText}>No {activeFilter} problems saved.</Text>
+                  </View>
+                ) : (
+                  filtered.map((item) => (
+                    <SavedCard key={item.id} item={item} onDelete={() => deleteItem(item.id)} />
+                  ))
+                )}
+                <View style={{ height: 32 }} />
+              </ScrollView>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── Sessions Tab ── */}
+      {activeTab === 'sessions' && (
+        <>
+          {sessions.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconWrap}>
+                <Ionicons name="chatbubbles-outline" size={48} color={Colors.textMuted} />
+              </View>
+              <Text style={styles.emptyTitle}>No sessions saved</Text>
+              <Text style={styles.emptySub}>
+                Start a tutoring session on the Dashboard and tap{' '}
+                <Text style={{ fontWeight: '700', color: Colors.primary }}>"Save"</Text>
+                {' '}to keep it for later.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+              {sessions.map((session) => (
+                <SessionCard
+                  key={session.id}
+                  session={session}
+                  onDelete={() => deleteSession(session.id)}
+                />
+              ))}
+              <View style={{ height: 32 }} />
+            </ScrollView>
+          )}
         </>
       )}
     </View>
@@ -234,11 +412,11 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: Colors.primary,
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingBottom: 14,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   headerTitle: { fontSize: 26, fontWeight: '700', color: Colors.white, marginBottom: 2 },
   headerSub: { fontSize: 14, color: 'rgba(255,255,255,0.75)' },
   countBadge: {
@@ -247,7 +425,18 @@ const styles = StyleSheet.create({
   },
   countBadgeText: { fontSize: 18, fontWeight: '700', color: Colors.white },
 
-  // Empty state (no items at all)
+  // Tab switcher
+  tabRow: { flexDirection: 'row', gap: 8 },
+  tabBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  tabBtnActive: { backgroundColor: Colors.white },
+  tabBtnText: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.7)' },
+  tabBtnTextActive: { color: Colors.primary },
+
+  // Empty state
   emptyContainer: {
     flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40,
   },
@@ -282,7 +471,7 @@ const styles = StyleSheet.create({
   emptyFilterState: { padding: 32, alignItems: 'center' },
   emptyFilterText: { fontSize: 14, color: Colors.textMuted },
 
-  // Card
+  // ── Problem Card ──
   card: {
     backgroundColor: Colors.card, borderRadius: 18, overflow: 'hidden', marginBottom: 16,
     shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.09, shadowRadius: 10, elevation: 3,
@@ -315,7 +504,7 @@ const styles = StyleSheet.create({
   },
   expandBtnText: { fontSize: 14, fontWeight: '600', color: Colors.primary },
 
-  // Breakdown (expanded)
+  // Breakdown
   breakdown: {
     borderTopWidth: 1, borderTopColor: Colors.border,
     paddingTop: 16, marginBottom: 12,
@@ -359,4 +548,55 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.secondary + '30',
   },
   deleteBtnText: { fontSize: 13, fontWeight: '600', color: Colors.secondary },
+
+  // ── Session Card ──
+  sessionHeaderBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 14, borderBottomWidth: 1, borderBottomColor: Colors.border,
+    backgroundColor: Colors.primaryLight,
+  },
+  sessionHeaderIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: Colors.white, alignItems: 'center', justifyContent: 'center',
+  },
+  sessionHeaderInfo: { flex: 1 },
+  sessionHeaderTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  sessionHeaderDate: { fontSize: 12, color: Colors.textLight, marginTop: 1 },
+
+  sessionPreviewText: {
+    fontSize: 14, color: Colors.textLight, lineHeight: 20, marginBottom: 12,
+  },
+
+  sessionStatsRow: {
+    flexDirection: 'row', gap: 16, marginBottom: 12,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: Colors.background, borderRadius: 10,
+  },
+  sessionStat: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  sessionStatText: { fontSize: 12, color: Colors.textLight, fontWeight: '500' },
+
+  // Conversation (expanded)
+  conversationWrap: {
+    borderTopWidth: 1, borderTopColor: Colors.border,
+    paddingTop: 14, marginBottom: 12, gap: 12,
+  },
+  convBubble: {
+    borderRadius: 14, padding: 12,
+  },
+  convBubbleUser: {
+    backgroundColor: Colors.primary + '08',
+    borderLeftWidth: 3, borderLeftColor: Colors.primary,
+  },
+  convBubbleAssistant: {
+    backgroundColor: Colors.teal + '08',
+    borderLeftWidth: 3, borderLeftColor: Colors.teal,
+  },
+  convBubbleHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6,
+  },
+  convBubbleRole: { fontSize: 12, fontWeight: '700', color: Colors.textLight },
+  convBubbleImage: {
+    width: '100%', height: 120, borderRadius: 8, marginBottom: 8,
+  },
+  convBubbleText: { fontSize: 14, color: Colors.text, lineHeight: 20 },
 });
