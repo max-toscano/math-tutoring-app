@@ -93,3 +93,60 @@ class SavedItemResponse(BaseModel):
     image_url: str
     analysis: dict[str, Any]
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Learn (structured lessons)
+# ---------------------------------------------------------------------------
+
+class LessonRequest(BaseModel):
+    subject: str          # slug, e.g. "calc-2"
+    chapter: Optional[str] = None  # slug, e.g. "right-triangle-trig" — required for chaptered subjects, None for flat
+    topic: str            # slug, e.g. "taylor-maclaurin"
+    student_input: Optional[str] = None  # None on first message (AI introduces topic)
+    conversation_history: Optional[list[Message]] = None
+
+
+# --- Structured lesson response (phase-aware) ---
+
+class QuizResultResponse(BaseModel):
+    is_correct: bool
+    explanation: str = ""
+    running_score: Optional[dict[str, int]] = None  # {"correct": 2, "total": 3}
+    concept_tested: Optional[str] = None
+
+class QuizSummaryResponse(BaseModel):
+    final_score: int
+    passed: bool                        # app-validated, not AI's opinion
+    missed_concepts: list[str] = []
+    message: str = ""
+
+class QuizOutcome(BaseModel):
+    """Returned when a quiz is finalized (after question 5)."""
+    score: int
+    passed: bool
+    new_phase: str
+    new_status: str
+    missed_concepts: list[str] = []
+
+class LessonResponse(BaseModel):
+    message: str                                     # AI's conversational message
+    phase: Optional[str] = None                      # current phase after this response
+    images: list[str] = []                           # image IDs referenced by AI
+    quiz_result: Optional[QuizResultResponse] = None # per-question quiz feedback
+    quiz_outcome: Optional[QuizOutcome] = None       # after all 5 questions
+    conversation_history: list[Message] = []
+
+    # Legacy compat — frontend can migrate gradually
+    response_text: Optional[str] = None
+    assessment: Optional[dict[str, Any]] = None
+
+
+class TopicProgress(BaseModel):
+    subject: str
+    chapter: Optional[str] = None  # None for flat subjects (_default in DB)
+    topic: str
+    status: str           # not_started | in_progress | completed | failed_last_attempt
+    phase: Optional[str] = None  # lesson | practice | quiz | review | done
+    messages_count: int
+    last_accessed_at: Optional[str] = None

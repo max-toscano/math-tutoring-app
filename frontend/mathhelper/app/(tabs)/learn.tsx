@@ -5,116 +5,162 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
+  Animated,
 } from 'react-native';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
+import {
+  ALL_SUBJECTS,
+  getSubject,
+  getTopic,
+  getChapter,
+  getChapterTopic,
+  hasChapters,
+  getTotalTopicCount,
+} from '../../constants/curriculums';
+import { getAllProgress, type TopicProgress } from '../../services/learn';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 48) / 2;
 
-const TOPICS = [
-  {
-    id: '1',
-    name: 'Algebra',
-    emoji: '📐',
-    lessons: 24,
-    completed: 16,
-    color: Colors.primary,
-    bgColor: Colors.primaryLight,
-    description: 'Equations, functions & polynomials',
-  },
-  {
-    id: '2',
-    name: 'Geometry',
-    emoji: '📏',
-    lessons: 18,
-    completed: 7,
-    color: Colors.teal,
-    bgColor: '#E8F8F7',
-    description: 'Shapes, angles & theorems',
-  },
-  {
-    id: '3',
-    name: 'Trigonometry',
-    emoji: '🔺',
-    lessons: 15,
-    completed: 3,
-    color: Colors.orange,
-    bgColor: '#FFF4E6',
-    description: 'Sin, cos, tan & identities',
-  },
-  {
-    id: '4',
-    name: 'Calculus',
-    emoji: '∫',
-    lessons: 30,
-    completed: 4,
-    color: Colors.secondary,
-    bgColor: '#FFF0F0',
-    description: 'Derivatives, integrals & limits',
-  },
-  {
-    id: '5',
-    name: 'Statistics',
-    emoji: '📊',
-    lessons: 12,
-    completed: 7,
-    color: Colors.green,
-    bgColor: '#EAFAF1',
-    description: 'Probability, data & distributions',
-  },
-  {
-    id: '6',
-    name: 'Number Theory',
-    emoji: '🔢',
-    lessons: 8,
-    completed: 0,
-    color: '#9B59B6',
-    bgColor: '#F5EEF8',
-    description: 'Primes, divisibility & proofs',
-  },
-];
-
-const FEATURED_LESSON = {
-  topic: 'Algebra',
-  title: 'Mastering Quadratic Equations',
-  duration: '12 min',
-  parts: 4,
-  color: Colors.primary,
-  bgColor: Colors.primaryLight,
-  emoji: '📐',
-};
-
-const RECENT_LESSONS = [
-  {
-    id: '1',
-    title: 'Graphing Linear Equations',
-    topic: 'Algebra',
-    duration: '8 min',
-    completed: true,
-    color: Colors.primary,
-  },
-  {
-    id: '2',
-    title: 'The Unit Circle',
-    topic: 'Trigonometry',
-    duration: '15 min',
-    completed: true,
-    color: Colors.orange,
-  },
-  {
-    id: '3',
-    title: 'Introduction to Derivatives',
-    topic: 'Calculus',
-    duration: '20 min',
-    completed: false,
-    color: Colors.secondary,
-  },
-];
+function SkeletonCard() {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+  return (
+    <Animated.View style={[styles.topicCard, { borderTopWidth: 3, borderTopColor: Colors.border, opacity }]}>
+      <View style={[styles.topicEmojiWrap, { backgroundColor: Colors.border }]} />
+      <View style={{ width: '60%', height: 14, backgroundColor: Colors.border, borderRadius: 4, marginBottom: 6 }} />
+      <View style={{ width: '80%', height: 10, backgroundColor: Colors.border, borderRadius: 4, marginBottom: 10 }} />
+      <View style={{ width: '40%', height: 10, backgroundColor: Colors.border, borderRadius: 4, marginBottom: 6 }} />
+      <View style={styles.progressRow}>
+        <View style={styles.progressTrack} />
+      </View>
+    </Animated.View>
+  );
+}
 
 export default function LearnScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  const [progress, setProgress] = useState<TopicProgress[]>([]);
+  const [loadingProgress, setLoadingProgress] = useState(true);
+  const [progressError, setProgressError] = useState(false);
+
+  // Reload progress every time the tab is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadProgress();
+    }, []),
+  );
+
+  async function loadProgress() {
+    setProgressError(false);
+    try {
+      const data = await getAllProgress();
+      setProgress(data);
+    } catch {
+      setProgressError(true);
+    } finally {
+      setLoadingProgress(false);
+    }
+  }
+
+  // Build a lookup: "subject:chapter:topic" -> TopicProgress
+  // For flat subjects chapter is "_default"
+  const progressMap = new Map<string, TopicProgress>();
+  for (const p of progress) {
+    const chapterKey = p.chapter ?? '_default';
+    progressMap.set(`${p.subject}:${chapterKey}:${p.topic}`, p);
+  }
+
+  // Continue Learning: in_progress topics, sorted by last_accessed (already sorted by backend)
+  const recentTopics = progress
+    .filter((p) => p.status === 'in_progress')
+    .slice(0, 3);
+
+  // Per-subject completion stats (handles both flat and chaptered)
+  function getSubjectStats(subjectSlug: string) {
+    const subject = getSubject(subjectSlug);
+    if (!subject) return { completed: 0, total: 0 };
+    const total = getTotalTopicCount(subject);
+    let completed = 0;
+
+    if (hasChapters(subject)) {
+      for (const ch of subject.chapters!) {
+        for (const t of ch.topics) {
+          if (progressMap.get(`${subjectSlug}:${ch.slug}:${t.slug}`)?.status === 'completed') {
+            completed++;
+          }
+        }
+      }
+    } else {
+      for (const t of subject.topics) {
+        if (progressMap.get(`${subjectSlug}:_default:${t.slug}`)?.status === 'completed') {
+          completed++;
+        }
+      }
+    }
+    return { completed, total };
+  }
+
+  // Featured lesson: most recent in-progress topic, or first untouched topic
+  const featuredTopic = (() => {
+    // Prefer most recent in-progress
+    if (recentTopics.length > 0) {
+      const p = recentTopics[0];
+      const s = getSubject(p.subject);
+      if (!s) return null;
+
+      if (p.chapter && hasChapters(s)) {
+        const ch = getChapter(p.subject, p.chapter);
+        const t = getChapterTopic(p.subject, p.chapter, p.topic);
+        if (ch && t) return { subject: s, chapter: ch, topic: t, isResume: true };
+      } else {
+        const t = getTopic(p.subject, p.topic);
+        if (t) return { subject: s, chapter: undefined, topic: t, isResume: true };
+      }
+    }
+    // Otherwise, first untouched topic across all subjects
+    for (const s of ALL_SUBJECTS) {
+      if (hasChapters(s)) {
+        for (const ch of s.chapters!) {
+          for (const t of ch.topics) {
+            if (!progressMap.has(`${s.slug}:${ch.slug}:${t.slug}`)) {
+              return { subject: s, chapter: ch, topic: t, isResume: false };
+            }
+          }
+        }
+      } else {
+        for (const t of s.topics) {
+          if (!progressMap.has(`${s.slug}:_default:${t.slug}`)) {
+            return { subject: s, chapter: undefined, topic: t, isResume: false };
+          }
+        }
+      }
+    }
+    return null;
+  })();
+
+  // Build lesson nav params for featured/continue cards
+  function getLessonParams(p: { subject: string; chapter?: string | null; topic: string }) {
+    const params: Record<string, string> = { subject: p.subject, topic: p.topic };
+    if (p.chapter) params.chapter = p.chapter;
+    return params;
+  }
 
   return (
     <View style={styles.container}>
@@ -137,105 +183,175 @@ export default function LearnScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Featured Lesson */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Featured Lesson</Text>
-          <TouchableOpacity
-            style={[styles.featuredCard, { backgroundColor: FEATURED_LESSON.color }]}
-            activeOpacity={0.85}
-          >
-            <View style={styles.featuredContent}>
-              <View>
-                <View style={styles.featuredBadge}>
-                  <Ionicons name="star" size={11} color={Colors.yellow} />
-                  <Text style={styles.featuredBadgeText}>FEATURED</Text>
-                </View>
-                <Text style={styles.featuredTitle}>{FEATURED_LESSON.title}</Text>
-                <Text style={styles.featuredTopic}>{FEATURED_LESSON.topic}</Text>
-                <View style={styles.featuredMeta}>
-                  <View style={styles.featuredMetaItem}>
-                    <Ionicons name="time-outline" size={13} color="rgba(255,255,255,0.8)" />
-                    <Text style={styles.featuredMetaText}>{FEATURED_LESSON.duration}</Text>
+        {featuredTopic && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Featured Lesson</Text>
+            <TouchableOpacity
+              style={[styles.featuredCard, { backgroundColor: featuredTopic.subject.color }]}
+              activeOpacity={0.85}
+              onPress={() =>
+                router.push({
+                  pathname: '/learn/lesson',
+                  params: getLessonParams({
+                    subject: featuredTopic.subject.slug,
+                    chapter: featuredTopic.chapter?.slug,
+                    topic: featuredTopic.topic.slug,
+                  }),
+                })
+              }
+            >
+              <View style={styles.featuredContent}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.featuredBadge}>
+                    <Ionicons name="star" size={11} color={Colors.yellow} />
+                    <Text style={styles.featuredBadgeText}>
+                      {featuredTopic.isResume ? 'CONTINUE' : 'START'}
+                    </Text>
                   </View>
-                  <View style={styles.featuredMetaItem}>
-                    <Ionicons name="layers-outline" size={13} color="rgba(255,255,255,0.8)" />
-                    <Text style={styles.featuredMetaText}>{FEATURED_LESSON.parts} parts</Text>
-                  </View>
+                  <Text style={styles.featuredTitle}>{featuredTopic.topic.name}</Text>
+                  <Text style={styles.featuredSubject}>
+                    {featuredTopic.chapter
+                      ? `${featuredTopic.chapter.name} · ${featuredTopic.subject.name}`
+                      : featuredTopic.subject.name}
+                  </Text>
+                  <TouchableOpacity style={styles.startBtn}>
+                    <Text style={[styles.startBtnText, { color: featuredTopic.subject.color }]}>
+                      {featuredTopic.isResume ? 'Resume Lesson' : 'Start Lesson'}
+                    </Text>
+                    <Ionicons name="arrow-forward" size={16} color={featuredTopic.subject.color} />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity style={styles.startBtn}>
-                  <Text style={styles.startBtnText}>Start Lesson</Text>
-                  <Ionicons name="arrow-forward" size={16} color={Colors.primary} />
-                </TouchableOpacity>
+                <Text style={styles.featuredEmoji}>{featuredTopic.subject.emoji}</Text>
               </View>
-              <Text style={styles.featuredEmoji}>{FEATURED_LESSON.emoji}</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
+            </TouchableOpacity>
+          </View>
+        )}
 
-        {/* Continue Section */}
+        {/* Progress error */}
+        {progressError && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="cloud-offline-outline" size={18} color={Colors.secondary} />
+            <Text style={styles.errorBannerText}>Couldn't load progress</Text>
+            <TouchableOpacity onPress={loadProgress}>
+              <Text style={styles.errorRetry}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Continue Learning */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Continue Learning</Text>
-            <TouchableOpacity>
-              <Text style={styles.seeAll}>See all</Text>
-            </TouchableOpacity>
           </View>
-          {RECENT_LESSONS.map((lesson) => (
-            <TouchableOpacity key={lesson.id} style={styles.lessonCard} activeOpacity={0.75}>
-              <View style={[styles.lessonDot, { backgroundColor: lesson.color }]} />
-              <View style={styles.lessonInfo}>
-                <Text style={styles.lessonTitle}>{lesson.title}</Text>
-                <View style={styles.lessonMeta}>
-                  <Text style={[styles.lessonTopic, { color: lesson.color }]}>{lesson.topic}</Text>
-                  <Text style={styles.lessonDuration}>· {lesson.duration}</Text>
-                </View>
-              </View>
-              <View style={styles.lessonRight}>
-                {lesson.completed ? (
-                  <View style={styles.completedBadge}>
-                    <Ionicons name="checkmark" size={14} color={Colors.green} />
+          {loadingProgress ? (
+            <View style={styles.emptyState}>
+              <View style={{ width: '100%', height: 12, backgroundColor: Colors.border, borderRadius: 4, marginBottom: 8 }} />
+              <View style={{ width: '70%', height: 12, backgroundColor: Colors.border, borderRadius: 4 }} />
+            </View>
+          ) : recentTopics.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="book-outline" size={32} color={Colors.textMuted} />
+              <Text style={styles.emptyStateText}>Start a topic below to begin learning</Text>
+            </View>
+          ) : (
+            recentTopics.map((p) => {
+              const subject = getSubject(p.subject);
+              if (!subject) return null;
+
+              // Resolve topic name for both flat and chaptered subjects
+              let topicName = p.topic;
+              if (p.chapter && hasChapters(subject)) {
+                const t = getChapterTopic(p.subject, p.chapter, p.topic);
+                topicName = t?.name ?? p.topic;
+              } else {
+                const t = getTopic(p.subject, p.topic);
+                topicName = t?.name ?? p.topic;
+              }
+
+              const chapterName = p.chapter
+                ? getChapter(p.subject, p.chapter)?.name
+                : undefined;
+
+              return (
+                <TouchableOpacity
+                  key={`${p.subject}:${p.chapter ?? ''}:${p.topic}`}
+                  style={styles.lessonCard}
+                  activeOpacity={0.75}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/learn/lesson',
+                      params: getLessonParams(p),
+                    })
+                  }
+                >
+                  <View style={[styles.lessonDot, { backgroundColor: subject.color }]} />
+                  <View style={styles.lessonInfo}>
+                    <Text style={styles.lessonTitle}>{topicName}</Text>
+                    <View style={styles.lessonMeta}>
+                      <Text style={[styles.lessonTopic, { color: subject.color }]}>
+                        {chapterName ? `${chapterName} · ${subject.name}` : subject.name}
+                      </Text>
+                      <Text style={styles.lessonDuration}>
+                        · {p.messages_count} messages
+                      </Text>
+                    </View>
                   </View>
-                ) : (
                   <View style={styles.resumeBtn}>
                     <Text style={styles.resumeBtnText}>Resume</Text>
                   </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* All Topics Grid */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>All Topics</Text>
-          <View style={styles.topicGrid}>
-            {TOPICS.map((topic) => {
-              const pct = Math.round((topic.completed / topic.lessons) * 100);
-              return (
-                <TouchableOpacity
-                  key={topic.id}
-                  style={[styles.topicCard, { borderTopColor: topic.color, borderTopWidth: 3 }]}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.topicEmojiWrap, { backgroundColor: topic.bgColor }]}>
-                    <Text style={styles.topicEmoji}>{topic.emoji}</Text>
-                  </View>
-                  <Text style={styles.topicName}>{topic.name}</Text>
-                  <Text style={styles.topicDesc} numberOfLines={2}>{topic.description}</Text>
-                  <Text style={styles.lessonCount}>{topic.lessons} lessons</Text>
-                  <View style={styles.progressRow}>
-                    <View style={styles.progressTrack}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          { width: `${pct}%`, backgroundColor: topic.color },
-                        ]}
-                      />
-                    </View>
-                    <Text style={[styles.progressPct, { color: topic.color }]}>{pct}%</Text>
-                  </View>
                 </TouchableOpacity>
               );
-            })}
+            })
+          )}
+        </View>
+
+        {/* All Subjects Grid */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>All Subjects</Text>
+          <View style={styles.topicGrid}>
+            {loadingProgress
+              ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+              : ALL_SUBJECTS.map((subject) => {
+                  const { completed, total } = getSubjectStats(subject.slug);
+                  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+                  const isChaptered = hasChapters(subject);
+                  const countLabel = isChaptered
+                    ? `${subject.chapters!.length} chapters`
+                    : `${total} topics`;
+                  return (
+                    <TouchableOpacity
+                      key={subject.slug}
+                      style={[styles.topicCard, { borderTopColor: subject.color, borderTopWidth: 3 }]}
+                      activeOpacity={0.8}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/learn/[subject]',
+                          params: { subject: subject.slug },
+                        })
+                      }
+                    >
+                      <View style={[styles.topicEmojiWrap, { backgroundColor: subject.bgColor }]}>
+                        <Text style={styles.topicEmoji}>{subject.emoji}</Text>
+                      </View>
+                      <Text style={styles.topicName}>{subject.name}</Text>
+                      <Text style={styles.topicDesc} numberOfLines={2}>
+                        {subject.description}
+                      </Text>
+                      <Text style={styles.lessonCount}>{countLabel}</Text>
+                      <View style={styles.progressRow}>
+                        <View style={styles.progressTrack}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              { width: `${pct}%`, backgroundColor: subject.color },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.progressPct, { color: subject.color }]}>{pct}%</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
           </View>
         </View>
       </ScrollView>
@@ -302,12 +418,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: 12,
   },
-  seeAll: {
-    fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
   featuredCard: {
     borderRadius: 20,
     padding: 20,
@@ -342,24 +452,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     maxWidth: 200,
   },
-  featuredTopic: {
+  featuredSubject: {
     fontSize: 13,
     color: 'rgba(255,255,255,0.75)',
-    marginBottom: 12,
-  },
-  featuredMeta: {
-    flexDirection: 'row',
-    gap: 14,
-    marginBottom: 16,
-  },
-  featuredMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  featuredMetaText: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
+    marginBottom: 14,
   },
   startBtn: {
     flexDirection: 'row',
@@ -374,11 +470,41 @@ const styles = StyleSheet.create({
   startBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: Colors.primary,
   },
   featuredEmoji: {
     fontSize: 64,
     opacity: 0.85,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.secondary + '15',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text,
+  },
+  errorRetry: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  emptyState: {
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    textAlign: 'center',
   },
   lessonCard: {
     backgroundColor: Colors.card,
@@ -419,15 +545,6 @@ const styles = StyleSheet.create({
   lessonDuration: {
     fontSize: 12,
     color: Colors.textMuted,
-  },
-  lessonRight: {},
-  completedBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.green + '20',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   resumeBtn: {
     backgroundColor: Colors.primaryLight,
