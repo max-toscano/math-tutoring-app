@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
 import { getSubject, getTopic, getChapterTopic, getChapter } from '../../constants/curriculums';
+import { getImageSource } from '../../constants/imageCatalog';
 import {
   sendLessonMessage,
   type Message,
@@ -26,6 +28,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  images?: string[];
   quizResult?: QuizResult;
   quizOutcome?: QuizOutcome;
 }
@@ -67,6 +70,7 @@ export default function LessonScreen() {
       id: Date.now().toString(),
       role: 'assistant',
       content: result.message,
+      images: result.images?.length ? result.images : undefined,
       quizResult: result.quiz_result ?? undefined,
       quizOutcome: result.quiz_outcome ?? undefined,
     };
@@ -206,6 +210,18 @@ export default function LessonScreen() {
                 >
                   {msg.content}
                 </Text>
+                {msg.images?.map((imageId) => {
+                  const source = getImageSource(imageId);
+                  if (!source) return null;
+                  return (
+                    <Image
+                      key={imageId}
+                      source={source}
+                      style={styles.lessonImage}
+                      resizeMode="contain"
+                    />
+                  );
+                })}
               </View>
             </View>
           ))}
@@ -346,6 +362,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
   },
   bubbleText: { fontSize: 15, lineHeight: 22 },
+  lessonImage: {
+    width: '100%',
+    height: 180,
+    marginTop: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.background,
+  },
   userBubbleText: { color: Colors.white },
   assistantBubbleText: { color: Colors.text },
   thinkingText: { fontSize: 13, color: Colors.textLight, marginLeft: 8 },
