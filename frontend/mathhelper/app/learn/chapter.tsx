@@ -115,6 +115,17 @@ export default function ChapterDetailScreen() {
     return Colors.textMuted;
   }
 
+  function getPhasePercent(phase: string | null): number {
+    const map: Record<string, number> = {
+      lesson: 20,
+      practice: 45,
+      quiz: 70,
+      review: 60,
+      done: 100,
+    };
+    return map[phase ?? ''] ?? 10;
+  }
+
   function getButtonLabel(topic: Topic) {
     const p = progressMap[topic.slug];
     if (p?.status === 'completed') return 'Review';
@@ -210,9 +221,24 @@ export default function ChapterDetailScreen() {
                     {topic.description}
                   </Text>
                   {p && p.status === 'in_progress' && (
-                    <Text style={[styles.topicMeta, { color: subject.color }]}>
-                      {p.messages_count} messages
-                    </Text>
+                    <View style={styles.topicProgressRow}>
+                      <View style={styles.topicPhaseTag}>
+                        <Text style={[styles.topicPhaseText, { color: subject.color }]}>
+                          {p.phase ? p.phase.charAt(0).toUpperCase() + p.phase.slice(1) : 'In progress'}
+                        </Text>
+                      </View>
+                      <View style={styles.topicMiniTrack}>
+                        <View
+                          style={[
+                            styles.topicMiniFill,
+                            {
+                              backgroundColor: subject.color,
+                              width: `${getPhasePercent(p.phase)}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                    </View>
                   )}
                 </View>
               </View>
@@ -278,6 +304,33 @@ const styles = StyleSheet.create({
   topicName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   topicDesc: { fontSize: 12, color: Colors.textLight, lineHeight: 16 },
   topicMeta: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+  topicProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  topicPhaseTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: Colors.background,
+  },
+  topicPhaseText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  topicMiniTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  topicMiniFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
   topicBtn: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7, marginLeft: 8 },
   topicBtnText: { fontSize: 13, fontWeight: '700' },
   errorBanner: {

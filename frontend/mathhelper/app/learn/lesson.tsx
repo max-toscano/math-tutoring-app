@@ -57,6 +57,7 @@ export default function LessonScreen() {
   const [phase, setPhase] = useState<string | null>(null);
   const [quizOutcome, setQuizOutcome] = useState<QuizOutcome | null>(null);
   const [completed, setCompleted] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   // Auto-start lesson on mount
   useEffect(() => {
@@ -131,18 +132,33 @@ export default function LessonScreen() {
     }
   }
 
-  // handleComplete is no longer needed — completion is driven by quiz outcome
+  function handleSave() {
+    // Progress is already saved server-side on every message.
+    // This gives the user visual confirmation and navigates back.
+    setSaved(true);
+    setTimeout(() => router.back(), 600);
+  }
 
   const headerColor = subject?.color ?? Colors.primary;
-  const phaseLabels: Record<string, string> = {
-    lesson: 'Lesson',
-    practice: 'Practice',
-    quiz: 'Quiz',
-    review: 'Review',
-    done: 'Completed',
-  };
-  const progressLabel = phase ? (phaseLabels[phase] ?? phase) : 'Getting started';
-  const progressDotColor = phase === 'done' ? Colors.green : Colors.white;
+
+  // Progress stepper logic
+  const STEPS = [
+    { key: 'lesson', label: 'Learn', icon: 'book-outline' as const },
+    { key: 'practice', label: 'Practice', icon: 'pencil-outline' as const },
+    { key: 'quiz', label: 'Quiz', icon: 'help-circle-outline' as const },
+    { key: 'done', label: 'Done', icon: 'checkmark-circle-outline' as const },
+  ];
+
+  function getStepStatus(stepKey: string): 'completed' | 'active' | 'upcoming' {
+    if (!phase) return stepKey === 'lesson' ? 'active' : 'upcoming';
+    const phaseOrder = ['lesson', 'practice', 'quiz', 'done'];
+    const currentIdx = phaseOrder.indexOf(phase === 'review' ? 'quiz' : phase);
+    const stepIdx = phaseOrder.indexOf(stepKey);
+    if (phase === 'done') return 'completed';
+    if (stepIdx < currentIdx) return 'completed';
+    if (stepIdx === currentIdx) return 'active';
+    return 'upcoming';
+  }
 
   return (
     <View style={styles.container}>
@@ -160,14 +176,63 @@ export default function LessonScreen() {
               {chapter ? `${chapter.name} · ${subject?.name ?? ''}` : (subject?.name ?? '')}
             </Text>
           </View>
-          <View style={styles.backBtn} />
+          <TouchableOpacity onPress={handleSave} style={styles.backBtn} activeOpacity={0.7}>
+            <Ionicons
+              name={saved ? 'checkmark-circle' : 'bookmark-outline'}
+              size={22}
+              color={Colors.white}
+            />
+          </TouchableOpacity>
         </View>
-        {phase && (
-          <View style={styles.progressPill}>
-            <View style={[styles.progressDot, { backgroundColor: progressDotColor }]} />
-            <Text style={styles.progressPillText}>{progressLabel}</Text>
-          </View>
-        )}
+
+        {/* Progress Stepper */}
+        <View style={styles.stepperRow}>
+          {STEPS.map((step, i) => {
+            const status = getStepStatus(step.key);
+            const isReview = phase === 'review' && step.key === 'quiz';
+            return (
+              <View key={step.key} style={styles.stepperItem}>
+                {i > 0 && (
+                  <View
+                    style={[
+                      styles.stepperLine,
+                      status === 'upcoming'
+                        ? styles.stepperLineUpcoming
+                        : styles.stepperLineCompleted,
+                    ]}
+                  />
+                )}
+                <View
+                  style={[
+                    styles.stepperCircle,
+                    status === 'completed' && styles.stepperCircleCompleted,
+                    status === 'active' && styles.stepperCircleActive,
+                    status === 'upcoming' && styles.stepperCircleUpcoming,
+                  ]}
+                >
+                  {status === 'completed' ? (
+                    <Ionicons name="checkmark" size={14} color={Colors.white} />
+                  ) : (
+                    <Ionicons
+                      name={isReview ? 'refresh-outline' : step.icon}
+                      size={14}
+                      color={status === 'active' ? headerColor : 'rgba(255,255,255,0.4)'}
+                    />
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.stepperLabel,
+                    status === 'active' && styles.stepperLabelActive,
+                    status === 'upcoming' && styles.stepperLabelUpcoming,
+                  ]}
+                >
+                  {isReview ? 'Review' : step.label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
       </View>
 
       {/* Chat */}
@@ -251,6 +316,14 @@ export default function LessonScreen() {
           )}
         </ScrollView>
 
+        {/* Save confirmation */}
+        {saved && (
+          <View style={styles.saveToast}>
+            <Ionicons name="checkmark-circle" size={18} color={Colors.green} />
+            <Text style={styles.saveToastText}>Progress saved!</Text>
+          </View>
+        )}
+
         {/* Quiz outcome banner */}
         {quizOutcome && (
           <View style={[styles.quizBanner, { backgroundColor: quizOutcome.passed ? Colors.green + '18' : Colors.secondary + '18' }]}>
@@ -329,19 +402,58 @@ const styles = StyleSheet.create({
   headerCenter: { flex: 1, alignItems: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '700', color: Colors.white },
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
-  progressPill: {
+  stepperRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginTop: 6,
+    justifyContent: 'center',
+    marginTop: 10,
+    paddingHorizontal: 4,
   },
-  progressDot: { width: 8, height: 8, borderRadius: 4 },
-  progressPillText: { fontSize: 12, color: Colors.white, fontWeight: '600' },
+  stepperItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stepperLine: {
+    width: 28,
+    height: 2,
+    marginHorizontal: 2,
+    borderRadius: 1,
+  },
+  stepperLineCompleted: {
+    backgroundColor: 'rgba(255,255,255,0.7)',
+  },
+  stepperLineUpcoming: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  stepperCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperCircleCompleted: {
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  stepperCircleActive: {
+    backgroundColor: Colors.white,
+  },
+  stepperCircleUpcoming: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  stepperLabel: {
+    fontSize: 10,
+    color: Colors.white,
+    fontWeight: '600',
+    marginLeft: 4,
+    marginRight: 2,
+  },
+  stepperLabelActive: {
+    fontWeight: '700',
+  },
+  stepperLabelUpcoming: {
+    opacity: 0.5,
+  },
 
   chatArea: { flex: 1 },
   messageList: { flex: 1 },
@@ -397,6 +509,23 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginBottom: 2,
   },
   sendBtnDisabled: { opacity: 0.4 },
+  saveToast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: Colors.green + '15',
+  },
+  saveToastText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.green,
+  },
   quizBanner: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -263,9 +263,22 @@ export default function SubjectDetailScreen() {
                   <Text style={styles.topicDesc} numberOfLines={2}>
                     {chapter.description}
                   </Text>
-                  <Text style={[styles.topicMeta, { color: statusColor }]}>
-                    {chCompleted}/{chTotal} lessons
-                  </Text>
+                  <View style={styles.chapterProgressRow}>
+                    <View style={styles.chapterMiniTrack}>
+                      <View
+                        style={[
+                          styles.chapterMiniFill,
+                          {
+                            backgroundColor: statusColor,
+                            width: chTotal > 0 ? `${(chCompleted / chTotal) * 100}%` : '0%',
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.topicMeta, { color: statusColor }]}>
+                      {chCompleted}/{chTotal}
+                    </Text>
+                  </View>
                 </View>
               </View>
               <View style={[styles.topicBtn, { backgroundColor: subject.bgColor }]}>
@@ -378,6 +391,23 @@ const styles = StyleSheet.create({
   topicName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   topicDesc: { fontSize: 12, color: Colors.textLight, lineHeight: 16 },
   topicMeta: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+  chapterProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  chapterMiniTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  chapterMiniFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
   topicBtn: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7, marginLeft: 8 },
   topicBtnText: { fontSize: 13, fontWeight: '700' },
   errorBanner: {
