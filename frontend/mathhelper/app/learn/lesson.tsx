@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,19 +15,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
 import { getSubject, getTopic, getChapterTopic, getChapter } from '../../constants/curriculums';
-import { getImageSource } from '../../constants/imageCatalog';
 import {
   sendLessonMessage,
   type Message,
   type QuizResult,
   type QuizOutcome,
+  type LessonQuestion,
 } from '../../services/learn';
+import { RichMessageRenderer } from '../../components/chat/RichMessageRenderer';
+import { replaceMathSymbols } from '../../utils/mathText';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   images?: string[];
+  question?: LessonQuestion;
   quizResult?: QuizResult;
   quizOutcome?: QuizOutcome;
 }
@@ -72,6 +74,7 @@ export default function LessonScreen() {
       role: 'assistant',
       content: result.message,
       images: result.images?.length ? result.images : undefined,
+      question: result.question ?? undefined,
       quizResult: result.quiz_result ?? undefined,
       quizOutcome: result.quiz_outcome ?? undefined,
     };
@@ -133,10 +136,30 @@ export default function LessonScreen() {
   }
 
   function handleSave() {
-    // Progress is already saved server-side on every message.
-    // This gives the user visual confirmation and navigates back.
     setSaved(true);
     setTimeout(() => router.back(), 600);
+  }
+
+  async function handleQuizAnswer(answer: string) {
+    if (loading) return;
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: answer };
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+    setError(null);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    try {
+      const result = await sendLessonMessage(subjectSlug!, topicSlug!, {
+        chapter: chapterSlug ?? undefined,
+        studentInput: answer,
+        conversationHistory,
+      });
+      handleLessonResult(result);
+    } catch (e: any) {
+      setError(e.message ?? 'Something went wrong.');
+    } finally {
+      setLoading(false);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    }
   }
 
   const headerColor = subject?.color ?? Colors.primary;
@@ -261,33 +284,26 @@ export default function LessonScreen() {
                   <Ionicons name="school" size={14} color={headerColor} />
                 </View>
               )}
-              <View
-                style={[
-                  styles.bubbleContent,
-                  msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.bubbleText,
-                    msg.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
-                  ]}
-                >
-                  {msg.content}
-                </Text>
-                {msg.images?.map((imageId) => {
-                  const source = getImageSource(imageId);
-                  if (!source) return null;
-                  return (
-                    <Image
-                      key={imageId}
-                      source={source}
-                      style={styles.lessonImage}
-                      resizeMode="contain"
-                    />
-                  );
-                })}
-              </View>
+
+              {msg.role === 'user' ? (
+                <View style={[styles.bubbleContent, styles.userBubbleContent]}>
+                  <Text style={[styles.bubbleText, styles.userBubbleText]}>
+                    {replaceMathSymbols(msg.content)}
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.bubbleContent, styles.assistantBubbleContent]}>
+                  <RichMessageRenderer
+                    content={msg.content}
+                    images={msg.images}
+                    question={msg.question ?? undefined}
+                    quizResult={msg.quizResult}
+                    quizOutcome={msg.quizOutcome}
+                    onQuizAnswer={handleQuizAnswer}
+                    accentColor={headerColor}
+                  />
+                </View>
+              )}
             </View>
           ))}
 
@@ -466,21 +482,15 @@ const styles = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center', marginTop: 2,
   },
-  bubbleContent: { maxWidth: '80%', borderRadius: 18, padding: 14 },
-  userBubbleContent: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
+  bubbleContent: { borderRadius: 18, padding: 14 },
+  userBubbleContent: { backgroundColor: Colors.primary, borderBottomRightRadius: 4, maxWidth: '80%' },
   assistantBubbleContent: {
-    backgroundColor: Colors.card, borderBottomLeftRadius: 4,
+    flex: 1, backgroundColor: Colors.card, borderBottomLeftRadius: 4,
+    borderRadius: 18, padding: 16,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
   },
   bubbleText: { fontSize: 15, lineHeight: 22 },
-  lessonImage: {
-    width: '100%',
-    height: 180,
-    marginTop: 10,
-    borderRadius: 10,
-    backgroundColor: Colors.background,
-  },
   userBubbleText: { color: Colors.white },
   assistantBubbleText: { color: Colors.text },
   thinkingText: { fontSize: 13, color: Colors.textLight, marginLeft: 8 },

@@ -168,6 +168,7 @@ class LessonResponse(BaseModel):
     message: str                                     # AI's conversational message
     phase: Optional[str] = None                      # current phase after this response
     images: list[str] = []                           # image IDs referenced by AI
+    question: Optional[dict[str, Any]] = None        # structured question from AI (type, text, options)
     quiz_result: Optional[QuizResultResponse] = None # per-question quiz feedback
     quiz_outcome: Optional[QuizOutcome] = None       # after all 5 questions
     conversation_history: list[Message] = []

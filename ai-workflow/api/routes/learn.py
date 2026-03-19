@@ -529,6 +529,7 @@ def lesson(
     # ── 5. Extract fields from AI response ──────────────────────────────────
     ai_message = llm_result.get("message", llm_result.get("response_text", ""))
     ai_images = llm_result.get("images", [])
+    ai_question = llm_result.get("question")
     ai_quiz_result = llm_result.get("quiz_result")
     ai_quiz_summary = llm_result.get("quiz_summary")
     ai_phase_transition = llm_result.get("phase_transition")
@@ -596,6 +597,7 @@ def lesson(
         response_text=ai_message,  # legacy compat
         phase=current_phase,
         images=ai_images,
+        question=ai_question,
         quiz_result=quiz_result_resp,
         quiz_outcome=quiz_outcome_resp,
         conversation_history=new_history,

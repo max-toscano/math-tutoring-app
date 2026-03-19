@@ -28,10 +28,19 @@ export interface QuizOutcome {
   missed_concepts: string[];
 }
 
+export interface LessonQuestion {
+  type: 'multiple_choice' | 'free_response';
+  text: string;
+  options?: string[];
+  correct_answer?: string;
+  question_number?: number;
+}
+
 export interface LessonResponse {
   message: string;
   phase: string | null;
   images: string[];
+  question: LessonQuestion | null;
   quiz_result: QuizResult | null;
   quiz_outcome: QuizOutcome | null;
   conversation_history: Message[];
