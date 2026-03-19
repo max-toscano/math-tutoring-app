@@ -52,7 +52,7 @@ SUBJECT_NAMES = {
 }
 
 # Subjects that use chapter hierarchy
-CHAPTERED_SUBJECTS = {"trigonometry"}
+CHAPTERED_SUBJECTS = {"trigonometry", "calc-1"}
 
 # Chapter slug -> { "_display": chapter display name, topic_slug: topic display name }
 CHAPTER_NAMES: dict[str, dict[str, dict[str, str]]] = {
@@ -393,6 +393,7 @@ def lesson(
             quiz_attempt_number=progress.quiz_attempts or 0,
             missed_concepts=missed_concepts,
             completed_topics=completed_topics,
+            subject=req.subject,
         )
     else:
         # Fallback for topics without guides

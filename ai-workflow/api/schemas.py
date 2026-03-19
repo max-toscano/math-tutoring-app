@@ -81,6 +81,41 @@ class SubjectDetailResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Solve (image / text math problem solving)
+# ---------------------------------------------------------------------------
+
+class SolveStep(BaseModel):
+    step: int
+    title: str
+    math: Optional[str] = None
+    explanation: str
+    note: Optional[str] = None
+
+class SolveImageRequest(BaseModel):
+    image_base64: str                       # base64-encoded image of the math problem
+    mime_type: str = "image/jpeg"           # image/jpeg or image/png
+    student_question: Optional[str] = None  # optional follow-up question from the student
+
+class SolveTextRequest(BaseModel):
+    problem_text: str                       # the math problem as text
+    student_question: Optional[str] = None
+
+class SolveResponse(BaseModel):
+    problem: str
+    topic: str
+    subject_area: str
+    difficulty: str
+    answer: str
+    method: str
+    steps: list[SolveStep]
+    verification: Optional[str] = None
+    concepts: list[str] = []
+    prerequisites: list[str] = []
+    common_mistakes: list[str] = []
+    tip: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
 # Saved Items
 # ---------------------------------------------------------------------------
 

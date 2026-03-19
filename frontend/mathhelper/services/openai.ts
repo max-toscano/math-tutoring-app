@@ -19,6 +19,7 @@ export interface MathStep {
   title: string;
   explanation: string;
   math?: string;
+  note?: string;
 }
 
 export interface MathAnalysis {
@@ -28,7 +29,13 @@ export interface MathAnalysis {
   answer: string;
   steps: MathStep[];
   concepts: string[];
-  tip: string;
+  tip?: string;
+  // Extended fields from /solve endpoint
+  subject_area?: string;
+  method?: string;
+  verification?: string;
+  prerequisites?: string[];
+  common_mistakes?: string[];
 }
 
 const SYSTEM_PROMPT = `You are MathHelper AI, an expert mathematics tutor with mastery across all math subjects: arithmetic, algebra, geometry, trigonometry, calculus, linear algebra, number theory, probability, and statistics.

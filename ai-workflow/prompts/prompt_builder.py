@@ -16,11 +16,20 @@ from prompts.topic_guides import get_topic_guide
 
 # ─── [A] Role & Personality (static) ───────────────────────────────────────
 
-ROLE_PROMPT = """You are a warm, patient trigonometry tutor. You teach through conversation, not lectures. You adapt to the student — simpler language if they seem confused, more depth if they're breezing through.
+ROLE_PROMPT_TEMPLATE = """You are a warm, patient {subject_display} tutor. You teach through conversation, not lectures. You adapt to the student — simpler language if they seem confused, more depth if they're breezing through.
 
 You are kind, nurturing, and encouraging. Never condescending. If a student gets something wrong, you explain what went wrong clearly without making them feel bad. You celebrate small wins.
 
 Your audience ranges from high school students to college students to adult self-learners. Match the student's communication style."""
+
+SUBJECT_DISPLAY_NAMES: dict[str, str] = {
+    "trigonometry": "Trigonometry",
+    "calc-1": "Calculus 1",
+    "calc-2": "Calculus 2",
+    "calc-3": "Calculus 3",
+    "diff-eq": "Differential Equations",
+    "linear-algebra": "Linear Algebra",
+}
 
 
 # ─── [C] Phase Rules (one per phase) ───────────────────────────────────────
@@ -166,6 +175,7 @@ def build_lesson_prompt(
     quiz_attempt_number: int = 0,
     missed_concepts: list[str] | None = None,
     completed_topics: list[str] | None = None,
+    subject: str | None = None,
 ) -> str:
     """Assemble the full system prompt for a structured lesson.
 
@@ -175,19 +185,22 @@ def build_lesson_prompt(
         quiz_attempt_number:  Which quiz attempt this is (0 = hasn't quizzed yet)
         missed_concepts:      Concept slugs missed on last quiz (for review phase)
         completed_topics:     Topic slugs the student has already completed
+        subject:              Subject slug (e.g. "calc-1", "trigonometry")
 
     Returns:
         Complete system prompt string ready to send to OpenAI.
     """
     guide = get_topic_guide(topic_slug)
     if not guide:
-        # Fallback for topics without guides yet (Chapters 2-13)
-        return _build_fallback_prompt(topic_slug, phase)
+        # Fallback for topics without guides yet
+        return _build_fallback_prompt(topic_slug, phase, subject)
 
     sections: list[str] = []
 
     # [A] Role & Personality
-    sections.append(ROLE_PROMPT)
+    subject_key = guide.get("subject", "trigonometry")
+    subject_display = SUBJECT_DISPLAY_NAMES.get(subject_key, subject_key.title())
+    sections.append(ROLE_PROMPT_TEMPLATE.format(subject_display=subject_display))
 
     # [B] Current Sub-Chapter Content
     sections.append(_build_content_section(guide))
@@ -305,16 +318,15 @@ def _build_images_section(guide: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_fallback_prompt(topic_slug: str, phase: str) -> str:
-    """Fallback prompt for topics without guides (Chapters 2-13).
+def _build_fallback_prompt(topic_slug: str, phase: str, subject: str | None = None) -> str:
+    """Fallback prompt for topics without guides.
 
     Uses the old-style generic prompt until topic guides are added.
     """
     from prompts.system_prompt import build_system_prompt
-    # For ungoverned topics, fall back to the original generic prompt
-    # The phase is ignored since the old prompt doesn't support phases
+    subject_display = SUBJECT_DISPLAY_NAMES.get(subject or "", subject or "Mathematics")
     return build_system_prompt(
-        subject="Trigonometry",
+        subject=subject_display,
         mode="lesson",
         topic=topic_slug,
     )

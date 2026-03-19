@@ -1,16 +1,17 @@
 """
 topic_guides.py
-Structured teaching content for the trigonometry curriculum.
+Structured teaching content for all curricula.
 
 Each topic guide contains everything the prompt builder needs to assemble
 a phase-aware system prompt: teaching content (chunked), key concepts (for quiz
 coverage), practice problems, quiz guidelines, and common mistakes.
 
-The prompt builder (Step 3) reads from TOPIC_GUIDES[slug] and injects the
+The prompt builder reads from TOPIC_GUIDES[slug] and injects the
 relevant sections into the system prompt based on the current phase.
 
-Currently covers: Chapter 1 (Foundations — Angles and Their Measurement)
-Future: Chapters 2-13 will be added after the engine is validated.
+Currently covers:
+  - Trigonometry: Chapter 1 (Foundations — Angles and Their Measurement)
+  - Calculus 1: All 13 chapters (66 topics)
 """
 
 # ─── Types ──────────────────────────────────────────────────────────────────
@@ -585,3 +586,31 @@ def get_key_concepts(slug: str) -> list[str]:
     """Get the key concept slugs for a topic. Returns empty list if not found."""
     guide = TOPIC_GUIDES.get(slug)
     return guide["key_concepts"] if guide else []
+
+
+# ─── Merge Calculus 1 Topic Guides ─────────────────────────────────────────
+# Each chapter range is in its own file to keep files manageable.
+
+try:
+    from prompts.calc1_guides_ch1_4 import CALC1_GUIDES_CH1_4
+    TOPIC_GUIDES.update(CALC1_GUIDES_CH1_4)
+except ImportError:
+    pass
+
+try:
+    from prompts.calc1_guides_ch5_7 import CALC1_GUIDES_CH5_7
+    TOPIC_GUIDES.update(CALC1_GUIDES_CH5_7)
+except ImportError:
+    pass
+
+try:
+    from prompts.calc1_guides_ch8_10 import CALC1_GUIDES_CH8_10
+    TOPIC_GUIDES.update(CALC1_GUIDES_CH8_10)
+except ImportError:
+    pass
+
+try:
+    from prompts.calc1_guides_ch11_13 import CALC1_GUIDES_CH11_13
+    TOPIC_GUIDES.update(CALC1_GUIDES_CH11_13)
+except ImportError:
+    pass

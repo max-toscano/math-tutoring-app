@@ -17,7 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { analyzeMathImage, type MathAnalysis } from '../../services/openai';
+import { solveFromImage } from '../../services/solve';
+import type { MathAnalysis } from '../../services/openai';
 import { sendTutoringMessage, type Message } from '../../services/tutoring';
 import { useAppContext, type TutoringSession } from '../../context/AppContext';
 import { Colors } from '../../constants/Colors';
@@ -28,6 +29,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   imageUri?: string;
+  solveResult?: MathAnalysis;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ export default function DashboardScreen() {
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<MathAnalysis | null>(null);
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -166,25 +169,18 @@ export default function DashboardScreen() {
       setAnalyzing(true);
       setChatLoading(true);
       try {
-        const analysis = await analyzeMathImage(photo);
-        setAnalysisResult(analysis);
+        const solution = await solveFromImage(photo, text || undefined);
+        setAnalysisResult(solution);
+        setExpandedSteps(new Set());
 
-        const problemPrompt = text
-          ? `I have this math problem: ${analysis.problem}\n\nMy question: ${text}`
-          : `I have this math problem: ${analysis.problem}\n\nPlease help me solve it step by step. Don't just give me the answer — teach me how to work through it.`;
-
-        const tutorResult = await sendTutoringMessage(problemPrompt, {
-          subject: 'math',
-          mode: 'direct',
-        });
-
+        // Build a readable message from the structured solution
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: tutorResult.response_text ?? tutorResult.response ?? '',
+          content: solution.answer,
+          solveResult: solution,
         };
         setChatMessages((prev) => [...prev, assistantMsg]);
-        setConversationHistory(tutorResult.conversation_history);
       } catch (e: any) {
         setChatError(e.message ?? 'Something went wrong. Please try again.');
       } finally {
@@ -281,6 +277,7 @@ export default function DashboardScreen() {
     setChatError(null);
     setChatLoading(false);
     setAnalyzing(false);
+    setExpandedSteps(new Set());
     setCurrentSessionId(null);
     setSessionSaved(false);
     setAttachMenuOpen(false);
@@ -593,33 +590,151 @@ export default function DashboardScreen() {
                     msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
                   ]}
                 >
-                  {msg.role === 'assistant' && (
+                  {msg.role === 'assistant' && !msg.solveResult && (
                     <View style={styles.tutorAvatar}>
                       <Ionicons name="school" size={14} color={Colors.primary} />
                     </View>
                   )}
-                  <View
-                    style={[
-                      styles.bubbleContent,
-                      msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
-                    ]}
-                  >
-                    {msg.imageUri && (
-                      <Image
-                        source={{ uri: msg.imageUri }}
-                        style={styles.bubbleImage}
-                        resizeMode="cover"
-                      />
-                    )}
-                    <Text
+
+                  {/* ── Structured Solution Breakdown ── */}
+                  {msg.solveResult ? (
+                    <View style={styles.solveCard}>
+                      {/* Answer header */}
+                      <View style={styles.solveAnswerCard}>
+                        <View style={styles.solveAnswerHeader}>
+                          <Ionicons name="checkmark-circle" size={20} color={Colors.green} />
+                          <Text style={styles.solveAnswerLabel}>Answer</Text>
+                        </View>
+                        <Text style={styles.solveAnswerText}>{msg.solveResult.answer}</Text>
+                        <View style={styles.solveMetaRow}>
+                          <View style={[styles.solvePill, { backgroundColor: Colors.primary + '15' }]}>
+                            <Text style={[styles.solvePillText, { color: Colors.primary }]}>{msg.solveResult.topic}</Text>
+                          </View>
+                          <View style={[styles.solvePill, { backgroundColor: Colors.orange + '15' }]}>
+                            <Text style={[styles.solvePillText, { color: Colors.orange }]}>{msg.solveResult.difficulty}</Text>
+                          </View>
+                          {msg.solveResult.method ? (
+                            <View style={[styles.solvePill, { backgroundColor: Colors.teal + '15' }]}>
+                              <Text style={[styles.solvePillText, { color: Colors.teal }]}>{msg.solveResult.method}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+
+                      {/* Problem statement */}
+                      <View style={styles.solveProblemCard}>
+                        <Text style={styles.solveSectionLabel}>Problem</Text>
+                        <Text style={styles.solveProblemText}>{msg.solveResult.problem}</Text>
+                      </View>
+
+                      {/* Step-by-step breakdown */}
+                      <View style={styles.solveStepsCard}>
+                        <Text style={styles.solveSectionLabel}>Step-by-Step Solution</Text>
+                        {msg.solveResult.steps.map((step) => (
+                          <TouchableOpacity
+                            key={step.step}
+                            style={styles.solveStep}
+                            onPress={() => {
+                              setExpandedSteps((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(step.step)) next.delete(step.step);
+                                else next.add(step.step);
+                                return next;
+                              });
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.solveStepHeader}>
+                              <View style={styles.solveStepNumber}>
+                                <Text style={styles.solveStepNumberText}>{step.step}</Text>
+                              </View>
+                              <Text style={styles.solveStepTitle}>{step.title}</Text>
+                              <Ionicons
+                                name={expandedSteps.has(step.step) ? 'chevron-up' : 'chevron-down'}
+                                size={16}
+                                color={Colors.textMuted}
+                              />
+                            </View>
+                            {step.math && (
+                              <View style={styles.solveStepMath}>
+                                <Text style={styles.solveStepMathText}>{step.math}</Text>
+                              </View>
+                            )}
+                            {expandedSteps.has(step.step) && (
+                              <View style={styles.solveStepExpanded}>
+                                <Text style={styles.solveStepExplanation}>{step.explanation}</Text>
+                                {step.note && (
+                                  <View style={styles.solveStepNote}>
+                                    <Ionicons name="bulb-outline" size={14} color={Colors.orange} />
+                                    <Text style={styles.solveStepNoteText}>{step.note}</Text>
+                                  </View>
+                                )}
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
+                      {/* Verification */}
+                      {msg.solveResult.verification && (
+                        <View style={styles.solveVerifyCard}>
+                          <Ionicons name="shield-checkmark-outline" size={16} color={Colors.green} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.solveSectionLabel}>Verification</Text>
+                            <Text style={styles.solveVerifyText}>{msg.solveResult.verification}</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Concepts & Tip */}
+                      {(msg.solveResult.concepts?.length > 0 || msg.solveResult.tip) && (
+                        <View style={styles.solveExtrasCard}>
+                          {msg.solveResult.concepts?.length > 0 && (
+                            <View style={{ marginBottom: msg.solveResult.tip ? 12 : 0 }}>
+                              <Text style={styles.solveSectionLabel}>Key Concepts</Text>
+                              <View style={styles.solveConceptsRow}>
+                                {msg.solveResult.concepts.map((c, i) => (
+                                  <View key={i} style={styles.solveConceptChip}>
+                                    <Text style={styles.solveConceptChipText}>{c}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            </View>
+                          )}
+                          {msg.solveResult.tip && (
+                            <View style={styles.solveTipRow}>
+                              <Ionicons name="bulb" size={16} color={Colors.orange} />
+                              <Text style={styles.solveTipText}>{msg.solveResult.tip}</Text>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    /* Regular text bubble */
+                    <View
                       style={[
-                        styles.bubbleText,
-                        msg.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
+                        styles.bubbleContent,
+                        msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
                       ]}
                     >
-                      {msg.content}
-                    </Text>
-                  </View>
+                      {msg.imageUri && (
+                        <Image
+                          source={{ uri: msg.imageUri }}
+                          style={styles.bubbleImage}
+                          resizeMode="cover"
+                        />
+                      )}
+                      <Text
+                        style={[
+                          styles.bubbleText,
+                          msg.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
+                        ]}
+                      >
+                        {msg.content}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               ))}
 
@@ -633,7 +748,7 @@ export default function DashboardScreen() {
                     <View style={styles.thinkingRow}>
                       <Animated.View style={[styles.thinkingDot, { opacity: dotAnim }]} />
                       <Text style={styles.thinkingText}>
-                        {analyzing ? 'Reading your problem...' : 'Thinking...'}
+                        {analyzing ? 'Solving your problem...' : 'Thinking...'}
                       </Text>
                     </View>
                   </View>
@@ -1069,4 +1184,82 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   sendBtnDisabled: { opacity: 0.35 },
+
+  // ── Solve Breakdown ──
+  solveCard: {
+    width: '100%', gap: 10,
+  },
+  solveAnswerCard: {
+    backgroundColor: Colors.card, borderRadius: 16, padding: 16,
+    borderWidth: 1.5, borderColor: Colors.green + '40',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
+  },
+  solveAnswerHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8,
+  },
+  solveAnswerLabel: { fontSize: 13, fontWeight: '700', color: Colors.green, letterSpacing: 0.5 },
+  solveAnswerText: { fontSize: 22, fontWeight: '800', color: Colors.text, marginBottom: 10, lineHeight: 30 },
+  solveMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  solvePill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  solvePillText: { fontSize: 11, fontWeight: '700' },
+
+  solveProblemCard: {
+    backgroundColor: Colors.card, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  solveSectionLabel: { fontSize: 12, fontWeight: '700', color: Colors.textLight, letterSpacing: 0.4, marginBottom: 6 },
+  solveProblemText: { fontSize: 15, color: Colors.text, lineHeight: 22 },
+
+  solveStepsCard: {
+    backgroundColor: Colors.card, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  solveStep: {
+    backgroundColor: Colors.background, borderRadius: 12, padding: 12,
+    marginTop: 8,
+  },
+  solveStepHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+  },
+  solveStepNumber: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+  },
+  solveStepNumberText: { fontSize: 13, fontWeight: '800', color: Colors.white },
+  solveStepTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: Colors.text },
+  solveStepMath: {
+    backgroundColor: Colors.primaryLight, borderRadius: 8, padding: 10, marginTop: 8,
+    borderLeftWidth: 3, borderLeftColor: Colors.primary,
+  },
+  solveStepMathText: { fontSize: 14, fontWeight: '600', color: Colors.primaryDark, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  solveStepExpanded: { marginTop: 8 },
+  solveStepExplanation: { fontSize: 14, color: Colors.text, lineHeight: 21 },
+  solveStepNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 8,
+    backgroundColor: Colors.orange + '10', borderRadius: 8, padding: 8,
+  },
+  solveStepNoteText: { flex: 1, fontSize: 13, color: Colors.text, lineHeight: 19 },
+
+  solveVerifyCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: Colors.green + '10', borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.green + '25',
+  },
+  solveVerifyText: { fontSize: 14, color: Colors.text, lineHeight: 20 },
+
+  solveExtrasCard: {
+    backgroundColor: Colors.card, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  solveConceptsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  solveConceptChip: {
+    backgroundColor: Colors.primaryLight, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  solveConceptChipText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+  solveTipRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: Colors.orange + '10', borderRadius: 10, padding: 10,
+  },
+  solveTipText: { flex: 1, fontSize: 13, color: Colors.text, lineHeight: 19 },
 });

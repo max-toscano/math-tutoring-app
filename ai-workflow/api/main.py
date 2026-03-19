@@ -11,7 +11,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import auth, tutor, progress, saved, learn
+from api.routes import auth, tutor, progress, saved, learn, solve
 
 app = FastAPI(
     title="AI Tutoring API",
@@ -32,3 +32,4 @@ app.include_router(tutor.router)
 app.include_router(progress.router)
 app.include_router(saved.router)
 app.include_router(learn.router)
+app.include_router(solve.router)
