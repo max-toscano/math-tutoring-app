@@ -16,11 +16,12 @@ from openai import OpenAI
 from db.database import get_db
 from db.models import UserTopicProgress, QuizAttempt
 from api.schemas import (
-    LessonRequest, LessonResponse, TopicProgress, Message,
+    LessonRequest, LessonResponse, TopicProgress, Message, GraphData,
     QuizResultResponse, QuizOutcome,
 )
 from api.auth_middleware import get_current_user_id
 from prompts.system_prompt import build_system_prompt
+from api.graph_engine import generate_graph, GRAPH_RENDERERS
 from prompts.prompt_builder import build_lesson_prompt
 from prompts.topic_guides import get_topic_guide
 from api.phase_machine import (
@@ -530,9 +531,24 @@ def lesson(
     ai_message = llm_result.get("message", llm_result.get("response_text", ""))
     ai_images = llm_result.get("images", [])
     ai_question = llm_result.get("question")
+    ai_graphs_raw = llm_result.get("graphs", [])
     ai_quiz_result = llm_result.get("quiz_result")
     ai_quiz_summary = llm_result.get("quiz_summary")
     ai_phase_transition = llm_result.get("phase_transition")
+
+    # ── 5b. Render any graphs the AI requested ────────────────────────────
+    rendered_graphs: list[GraphData] = []
+    for g in ai_graphs_raw:
+        gtype = g.get("graph_type", "")
+        gdata = g.get("data", {})
+        if gtype in GRAPH_RENDERERS:
+            try:
+                img_b64 = generate_graph(gtype, gdata)
+                rendered_graphs.append(GraphData(
+                    graph_type=gtype, data=gdata, image_base64=img_b64
+                ))
+            except Exception:
+                pass  # Skip failed graphs silently
 
     quiz_result_resp = None
     quiz_outcome_resp = None
@@ -597,6 +613,7 @@ def lesson(
         response_text=ai_message,  # legacy compat
         phase=current_phase,
         images=ai_images,
+        graphs=rendered_graphs,
         question=ai_question,
         quiz_result=quiz_result_resp,
         quiz_outcome=quiz_outcome_resp,

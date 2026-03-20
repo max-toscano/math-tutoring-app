@@ -164,10 +164,16 @@ class QuizOutcome(BaseModel):
     new_status: str
     missed_concepts: list[str] = []
 
+class GraphData(BaseModel):
+    graph_type: str                  # e.g. "function_plot", "tangent_line"
+    data: dict[str, Any]             # type-specific parameters
+    image_base64: Optional[str] = None  # filled by backend after rendering
+
 class LessonResponse(BaseModel):
     message: str                                     # AI's conversational message
     phase: Optional[str] = None                      # current phase after this response
-    images: list[str] = []                           # image IDs referenced by AI
+    images: list[str] = []                           # pre-made image IDs referenced by AI
+    graphs: list[GraphData] = []                     # server-generated graphs
     question: Optional[dict[str, Any]] = None        # structured question from AI (type, text, options)
     quiz_result: Optional[QuizResultResponse] = None # per-question quiz feedback
     quiz_outcome: Optional[QuizOutcome] = None       # after all 5 questions

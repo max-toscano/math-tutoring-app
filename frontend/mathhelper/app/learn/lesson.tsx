@@ -21,6 +21,7 @@ import {
   type QuizResult,
   type QuizOutcome,
   type LessonQuestion,
+  type GraphData,
 } from '../../services/learn';
 import { RichMessageRenderer } from '../../components/chat/RichMessageRenderer';
 import { replaceMathSymbols } from '../../utils/mathText';
@@ -30,6 +31,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   images?: string[];
+  graphs?: GraphData[];
   question?: LessonQuestion;
   quizResult?: QuizResult;
   quizOutcome?: QuizOutcome;
@@ -74,6 +76,7 @@ export default function LessonScreen() {
       role: 'assistant',
       content: result.message,
       images: result.images?.length ? result.images : undefined,
+      graphs: result.graphs?.length ? result.graphs : undefined,
       question: result.question ?? undefined,
       quizResult: result.quiz_result ?? undefined,
       quizOutcome: result.quiz_outcome ?? undefined,
@@ -296,6 +299,7 @@ export default function LessonScreen() {
                   <RichMessageRenderer
                     content={msg.content}
                     images={msg.images}
+                    graphs={msg.graphs}
                     question={msg.question ?? undefined}
                     quizResult={msg.quizResult}
                     quizOutcome={msg.quizOutcome}

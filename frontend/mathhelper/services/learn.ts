@@ -36,10 +36,17 @@ export interface LessonQuestion {
   question_number?: number;
 }
 
+export interface GraphData {
+  graph_type: string;
+  data: Record<string, any>;
+  image_base64?: string;
+}
+
 export interface LessonResponse {
   message: string;
   phase: string | null;
   images: string[];
+  graphs: GraphData[];
   question: LessonQuestion | null;
   quiz_result: QuizResult | null;
   quiz_outcome: QuizOutcome | null;

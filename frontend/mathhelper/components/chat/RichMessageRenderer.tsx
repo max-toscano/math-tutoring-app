@@ -10,13 +10,14 @@ import { RichText } from './RichText';
 import { parseMessageBlocks, type ContentBlock } from '../../utils/messageParser';
 import { replaceMathSymbols } from '../../utils/mathText';
 import { getImageSource } from '../../constants/imageCatalog';
-import type { QuizResult, QuizOutcome } from '../../services/learn';
+import type { QuizResult, QuizOutcome, GraphData } from '../../services/learn';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
   content: string;
   images?: string[];
+  graphs?: GraphData[];
   question?: {
     type: 'multiple_choice' | 'free_response';
     text: string;
@@ -34,6 +35,7 @@ interface Props {
 export function RichMessageRenderer({
   content,
   images,
+  graphs,
   question,
   quizResult,
   quizOutcome,
@@ -59,6 +61,17 @@ export function RichMessageRenderer({
           </View>
         );
       })}
+
+      {/* Server-generated graphs */}
+      {graphs?.map((g, idx) => g.image_base64 ? (
+        <View key={`graph-${idx}`} style={styles.graphWrap}>
+          <Image
+            source={{ uri: `data:image/png;base64,${g.image_base64}` }}
+            style={styles.graphImage}
+            resizeMode="contain"
+          />
+        </View>
+      ) : null)}
 
       {/* Quiz question (multiple choice buttons) */}
       {question && question.type === 'multiple_choice' && question.options && (
@@ -360,6 +373,20 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 180,
     borderRadius: 12,
+  },
+
+  // Server-generated graphs
+  graphWrap: {
+    backgroundColor: '#FAFAFA',
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  graphImage: {
+    width: '100%',
+    height: 260,
   },
 
   // Quiz

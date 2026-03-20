@@ -114,7 +114,29 @@ Do not wrap in markdown code blocks. Just raw JSON.
   "message": "Your conversational message to the student. Supports markdown.",
 
   "images": ["image_id"],
-  // Optional. Array of pre-made image IDs to display. Omit if no images needed.
+  // Optional. Array of pre-made image IDs to display. Only for topics that have them.
+
+  "graphs": [
+    {
+      "graph_type": "function_plot",
+      "data": {
+        "functions": [{"expr": "x**2", "label": "f(x) = x^2"}],
+        "domain": [-3, 3],
+        "title": "Graph of f(x) = x^2"
+      }
+    }
+  ],
+  // Optional. Request server-rendered graphs. Available graph types:
+  // - "function_plot": Plot functions. data: { functions: [{expr, label?, color?, style?}], domain: [a,b], title?, ylim? }
+  // - "tangent_line": Function with tangent. data: { function: expr, point: x_val, domain: [a,b], title? }
+  // - "riemann_sum": Area approximation. data: { function: expr, interval: [a,b], n: int, method: "left"|"right"|"midpoint", title? }
+  // - "area_between": Shaded area. data: { top: expr, bottom: expr, interval: [a,b], title? }
+  // - "derivative_analysis": Triple f/f'/f'' panel. data: { function: expr, derivative?: expr, second_derivative?: expr, domain: [a,b], title? }
+  // - "limit": Limit visualization. data: { function: expr, approach: x_val, limit_value: y_val, domain: [a,b], title? }
+  // - "volume_revolution": 3D solid. data: { function: expr, interval: [a,b], title? }
+  // - "newtons_method": Iteration visualization. data: { function: expr, derivative: expr, x0: float, iterations: int, domain: [a,b], title? }
+  // Use Python math syntax in expressions: x**2 (not x^2), sin(x), sqrt(x), exp(x), log(x), pi, e
+  // USE GRAPHS FREQUENTLY — they help students visualize concepts. Include a graph whenever you introduce a new function, concept, or example.
 
   "question": {
     "type": "multiple_choice" or "free_response",
