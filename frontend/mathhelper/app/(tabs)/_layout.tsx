@@ -69,11 +69,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="quiz"
+        name="graph"
         options={{
-          title: 'Quiz',
+          title: 'Graph',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="help-circle" color={color} size={size} />
+            <TabIcon name="analytics" color={color} size={size} />
           ),
         }}
       />

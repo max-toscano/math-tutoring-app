@@ -19,9 +19,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { solveFromImage } from '../../services/solve';
 import type { MathAnalysis } from '../../services/openai';
-import { sendTutoringMessage, type Message } from '../../services/tutoring';
+import {
+  startAgentSession,
+  sendAgentMessage,
+  closeAgentSession,
+  type AgentMessage,
+  type GraphOutput,
+} from '../../services/agent';
 import { useAppContext, type TutoringSession } from '../../context/AppContext';
 import { Colors } from '../../constants/Colors';
+import ResponseBubble from '../../components/ResponseBubble';
+import SuggestionChips from '../../components/SuggestionChips';
+import ToolStatus from '../../components/ToolStatus';
+import MessageReactions from '../../components/MessageReactions';
+import SessionSummaryCard from '../../components/SessionSummaryCard';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface ChatMessage {
@@ -30,7 +41,20 @@ interface ChatMessage {
   content: string;
   imageUri?: string;
   solveResult?: MathAnalysis;
+  topic?: string;
+  mode?: string;
+  tools?: string[];
+  graphs?: GraphOutput[];
+  suggestions?: string[];
 }
+
+const MODE_OPTIONS = [
+  { key: null, label: 'Auto', icon: 'sparkles-outline' },
+  { key: 'explain', label: 'Explain', icon: 'bulb-outline' },
+  { key: 'guide_me', label: 'Guide Me', icon: 'help-circle-outline' },
+  { key: 'hint', label: 'Hint', icon: 'eye-outline' },
+  { key: 'check_answer', label: 'Check Work', icon: 'checkmark-circle-outline' },
+] as const;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatSessionDate(iso: string) {
@@ -88,17 +112,42 @@ export default function DashboardScreen() {
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<AgentMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+
+  // Agent session
+  const [agentSessionId, setAgentSessionId] = useState<string | null>(null);
+
+  // Session summary modal
+  const [showSummary, setShowSummary] = useState(false);
+  const [sessionSummaryData, setSessionSummaryData] = useState<{
+    summary?: string;
+    totalProblems: number;
+    successRate: number;
+    topicsPracticed?: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    startAgentSession()
+      .then(({ session_id }) => {
+        console.log('Session started:', session_id);
+        setAgentSessionId(session_id);
+      })
+      .catch((e) => {
+        console.error('Session start failed:', e);
+        setChatError('Failed to connect. Make sure the backend is running.');
+      });
+  }, []);
 
   // Session state
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionSaved, setSessionSaved] = useState(false);
   const [savingSession, setSavingSession] = useState(false);
 
-  // Attach menu state
+  // Mode + Attach state
+  const [selectedMode, setSelectedMode] = useState<string | null>(null);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
 
   // Animated dot indicator for "thinking"
@@ -140,6 +189,55 @@ export default function DashboardScreen() {
     });
     if (!result.canceled) {
       setPendingPhoto(result.assets[0].uri);
+    }
+  }
+
+  // ── "Still confused" — sends a contextual follow-up with full history ──
+  async function handleStillConfused(confusingMessage: string) {
+    if (chatLoading || !agentSessionId) return;
+
+    // Build a follow-up that references what the student is confused about
+    const truncated = confusingMessage.slice(0, 200);
+    const followUpText = `I'm still confused about your previous explanation. Can you explain it more simply or try a different approach? Here's what I didn't understand: "${truncated}"`;
+
+    // Show as a user message in the chat
+    const userMsg: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: "I'm still confused — can you explain that differently?",
+    };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatLoading(true);
+
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+
+    try {
+      const result = await sendAgentMessage(agentSessionId, followUpText, {
+        selectedMode: selectedMode ?? undefined,
+        conversationHistory,
+      });
+
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: result.response,
+        topic: result.topic ?? undefined,
+        mode: result.mode ?? undefined,
+        tools: result.tools_used,
+        graphs: result.graphs,
+        suggestions: result.suggestions,
+      };
+      setChatMessages((prev) => [...prev, assistantMsg]);
+      setConversationHistory((prev) => [
+        ...prev,
+        { role: 'user' as const, content: followUpText },
+        { role: 'assistant' as const, content: result.response },
+      ]);
+    } catch (e: any) {
+      setChatError(e.message ?? 'Something went wrong.');
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 200);
     }
   }
 
@@ -189,20 +287,31 @@ export default function DashboardScreen() {
         setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 200);
       }
     } else {
+      // Text chat via the agent
       setChatLoading(true);
       try {
-        const result = await sendTutoringMessage(text, {
-          subject: 'math',
+        if (!agentSessionId) throw new Error('Session not started');
+        const result = await sendAgentMessage(agentSessionId, text, {
+          selectedMode: selectedMode ?? undefined,
           conversationHistory,
         });
 
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: result.response_text ?? result.response ?? '',
+          content: result.response,
+          topic: result.topic ?? undefined,
+          mode: result.mode ?? undefined,
+          tools: result.tools_used,
+          graphs: result.graphs,
+          suggestions: result.suggestions,
         };
         setChatMessages((prev) => [...prev, assistantMsg]);
-        setConversationHistory(result.conversation_history);
+        setConversationHistory((prev) => [
+          ...prev,
+          { role: 'user' as const, content: text },
+          { role: 'assistant' as const, content: result.response },
+        ]);
       } catch (e: any) {
         setChatError(e.message ?? 'Something went wrong.');
       } finally {
@@ -268,6 +377,33 @@ export default function DashboardScreen() {
     }
   }
 
+  async function handleExit() {
+    // Close session and show summary before resetting
+    if (agentSessionId && chatMessages.some((m) => m.role === 'assistant')) {
+      try {
+        const closeData = await closeAgentSession(agentSessionId);
+        // Collect topics from messages
+        const topics = chatMessages
+          .filter((m) => m.topic)
+          .map((m) => m.topic!)
+          .filter((t, i, a) => a.indexOf(t) === i); // unique
+
+        setSessionSummaryData({
+          summary: closeData.session_summary ?? undefined,
+          totalProblems: closeData.total_problems,
+          successRate: closeData.success_rate,
+          topicsPracticed: topics.length > 0 ? topics : undefined,
+        });
+        setShowSummary(true);
+      } catch {
+        // If close fails, just reset
+        resetAll();
+      }
+    } else {
+      resetAll();
+    }
+  }
+
   function resetAll() {
     setPendingPhoto(null);
     setAnalysisResult(null);
@@ -281,6 +417,12 @@ export default function DashboardScreen() {
     setCurrentSessionId(null);
     setSessionSaved(false);
     setAttachMenuOpen(false);
+    setShowSummary(false);
+    setSessionSummaryData(null);
+    // Start fresh agent session
+    startAgentSession()
+      .then(({ session_id }) => setAgentSessionId(session_id))
+      .catch(() => {});
   }
 
   const recentSaved = savedItems.slice(0, 3);
@@ -323,7 +465,7 @@ export default function DashboardScreen() {
                 )}
               </TouchableOpacity>
               {/* Exit button */}
-              <TouchableOpacity style={[styles.headerActionBtn, styles.headerActionBtnExit]} onPress={resetAll}>
+              <TouchableOpacity style={[styles.headerActionBtn, styles.headerActionBtnExit]} onPress={handleExit}>
                 <Ionicons name="close-outline" size={18} color={Colors.white} />
                 <Text style={styles.headerActionText}>Exit</Text>
               </TouchableOpacity>
@@ -433,11 +575,20 @@ export default function DashboardScreen() {
               <View style={styles.quickSection}>
                 <Text style={styles.quickLabel}>Or ask a question</Text>
                 <View style={styles.quickChips}>
-                  {['How do I factor x² - 9?', 'Explain derivatives', 'Check my work'].map((s) => (
+                  {[
+                    'How do I factor x² - 9?',
+                    'Explain the chain rule',
+                    'What is a derivative?',
+                    'Help me with trig identities',
+                  ].map((s) => (
                     <TouchableOpacity
                       key={s}
                       style={styles.quickChip}
-                      onPress={() => setChatInput(s)}
+                      onPress={() => {
+                        setChatInput(s);
+                        // Auto-send after a tick
+                        setTimeout(() => handleSend(), 50);
+                      }}
                       activeOpacity={0.7}
                     >
                       <Ionicons name="chatbubble-outline" size={13} color={Colors.primary} />
@@ -583,177 +734,122 @@ export default function DashboardScreen() {
 
               {/* Messages */}
               {chatMessages.map((msg) => (
-                <View
-                  key={msg.id}
-                  style={[
-                    styles.messageBubble,
-                    msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
-                  ]}
-                >
-                  {msg.role === 'assistant' && !msg.solveResult && (
-                    <View style={styles.tutorAvatar}>
-                      <Ionicons name="school" size={14} color={Colors.primary} />
-                    </View>
-                  )}
+                <View key={msg.id} style={{ marginBottom: 8 }}>
+                  {/* Message bubble */}
+                  <View
+                    style={[
+                      styles.messageBubble,
+                      msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                    ]}
+                  >
+                    {msg.role === 'assistant' && !msg.solveResult && (
+                      <View style={styles.tutorAvatar}>
+                        <Ionicons name="school" size={14} color={Colors.primary} />
+                      </View>
+                    )}
 
-                  {/* ── Structured Solution Breakdown ── */}
-                  {msg.solveResult ? (
-                    <View style={styles.solveCard}>
-                      {/* Answer header */}
-                      <View style={styles.solveAnswerCard}>
-                        <View style={styles.solveAnswerHeader}>
-                          <Ionicons name="checkmark-circle" size={20} color={Colors.green} />
-                          <Text style={styles.solveAnswerLabel}>Answer</Text>
-                        </View>
-                        <Text style={styles.solveAnswerText}>{msg.solveResult.answer}</Text>
-                        <View style={styles.solveMetaRow}>
-                          <View style={[styles.solvePill, { backgroundColor: Colors.primary + '15' }]}>
-                            <Text style={[styles.solvePillText, { color: Colors.primary }]}>{msg.solveResult.topic}</Text>
+                    {msg.solveResult ? (
+                      <View style={styles.solveCard}>
+                        <View style={styles.solveAnswerCard}>
+                          <View style={styles.solveAnswerHeader}>
+                            <Ionicons name="checkmark-circle" size={20} color={Colors.green} />
+                            <Text style={styles.solveAnswerLabel}>Answer</Text>
                           </View>
-                          <View style={[styles.solvePill, { backgroundColor: Colors.orange + '15' }]}>
-                            <Text style={[styles.solvePillText, { color: Colors.orange }]}>{msg.solveResult.difficulty}</Text>
-                          </View>
-                          {msg.solveResult.method ? (
-                            <View style={[styles.solvePill, { backgroundColor: Colors.teal + '15' }]}>
-                              <Text style={[styles.solvePillText, { color: Colors.teal }]}>{msg.solveResult.method}</Text>
+                          <Text style={styles.solveAnswerText}>{msg.solveResult.answer}</Text>
+                          <View style={styles.solveMetaRow}>
+                            <View style={[styles.solvePill, { backgroundColor: Colors.primary + '15' }]}>
+                              <Text style={[styles.solvePillText, { color: Colors.primary }]}>{msg.solveResult.topic}</Text>
                             </View>
-                          ) : null}
+                            <View style={[styles.solvePill, { backgroundColor: Colors.orange + '15' }]}>
+                              <Text style={[styles.solvePillText, { color: Colors.orange }]}>{msg.solveResult.difficulty}</Text>
+                            </View>
+                          </View>
                         </View>
-                      </View>
-
-                      {/* Problem statement */}
-                      <View style={styles.solveProblemCard}>
-                        <Text style={styles.solveSectionLabel}>Problem</Text>
-                        <Text style={styles.solveProblemText}>{msg.solveResult.problem}</Text>
-                      </View>
-
-                      {/* Step-by-step breakdown */}
-                      <View style={styles.solveStepsCard}>
-                        <Text style={styles.solveSectionLabel}>Step-by-Step Solution</Text>
-                        {msg.solveResult.steps.map((step) => (
-                          <TouchableOpacity
-                            key={step.step}
-                            style={styles.solveStep}
-                            onPress={() => {
+                        <View style={styles.solveStepsCard}>
+                          <Text style={styles.solveSectionLabel}>Steps</Text>
+                          {msg.solveResult.steps.map((step) => (
+                            <TouchableOpacity key={step.step} style={styles.solveStep} onPress={() => {
                               setExpandedSteps((prev) => {
                                 const next = new Set(prev);
-                                if (next.has(step.step)) next.delete(step.step);
-                                else next.add(step.step);
+                                next.has(step.step) ? next.delete(step.step) : next.add(step.step);
                                 return next;
                               });
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.solveStepHeader}>
-                              <View style={styles.solveStepNumber}>
-                                <Text style={styles.solveStepNumberText}>{step.step}</Text>
+                            }} activeOpacity={0.7}>
+                              <View style={styles.solveStepHeader}>
+                                <View style={styles.solveStepNumber}><Text style={styles.solveStepNumberText}>{step.step}</Text></View>
+                                <Text style={styles.solveStepTitle}>{step.title}</Text>
+                                <Ionicons name={expandedSteps.has(step.step) ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMuted} />
                               </View>
-                              <Text style={styles.solveStepTitle}>{step.title}</Text>
-                              <Ionicons
-                                name={expandedSteps.has(step.step) ? 'chevron-up' : 'chevron-down'}
-                                size={16}
-                                color={Colors.textMuted}
-                              />
-                            </View>
-                            {step.math && (
-                              <View style={styles.solveStepMath}>
-                                <Text style={styles.solveStepMathText}>{step.math}</Text>
-                              </View>
-                            )}
-                            {expandedSteps.has(step.step) && (
-                              <View style={styles.solveStepExpanded}>
-                                <Text style={styles.solveStepExplanation}>{step.explanation}</Text>
-                                {step.note && (
-                                  <View style={styles.solveStepNote}>
-                                    <Ionicons name="bulb-outline" size={14} color={Colors.orange} />
-                                    <Text style={styles.solveStepNoteText}>{step.note}</Text>
-                                  </View>
-                                )}
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        ))}
+                              {step.math && <View style={styles.solveStepMath}><Text style={styles.solveStepMathText}>{step.math}</Text></View>}
+                              {expandedSteps.has(step.step) && (
+                                <View style={styles.solveStepExpanded}>
+                                  <Text style={styles.solveStepExplanation}>{step.explanation}</Text>
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       </View>
-
-                      {/* Verification */}
-                      {msg.solveResult.verification && (
-                        <View style={styles.solveVerifyCard}>
-                          <Ionicons name="shield-checkmark-outline" size={16} color={Colors.green} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.solveSectionLabel}>Verification</Text>
-                            <Text style={styles.solveVerifyText}>{msg.solveResult.verification}</Text>
-                          </View>
-                        </View>
-                      )}
-
-                      {/* Concepts & Tip */}
-                      {(msg.solveResult.concepts?.length > 0 || msg.solveResult.tip) && (
-                        <View style={styles.solveExtrasCard}>
-                          {msg.solveResult.concepts?.length > 0 && (
-                            <View style={{ marginBottom: msg.solveResult.tip ? 12 : 0 }}>
-                              <Text style={styles.solveSectionLabel}>Key Concepts</Text>
-                              <View style={styles.solveConceptsRow}>
-                                {msg.solveResult.concepts.map((c, i) => (
-                                  <View key={i} style={styles.solveConceptChip}>
-                                    <Text style={styles.solveConceptChipText}>{c}</Text>
-                                  </View>
-                                ))}
-                              </View>
-                            </View>
-                          )}
-                          {msg.solveResult.tip && (
-                            <View style={styles.solveTipRow}>
-                              <Ionicons name="bulb" size={16} color={Colors.orange} />
-                              <Text style={styles.solveTipText}>{msg.solveResult.tip}</Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  ) : (
-                    /* Regular text bubble */
-                    <View
-                      style={[
-                        styles.bubbleContent,
-                        msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
-                      ]}
-                    >
-                      {msg.imageUri && (
-                        <Image
-                          source={{ uri: msg.imageUri }}
-                          style={styles.bubbleImage}
-                          resizeMode="cover"
-                        />
-                      )}
-                      <Text
+                    ) : (
+                      <View
                         style={[
-                          styles.bubbleText,
-                          msg.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
+                          styles.bubbleContent,
+                          msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
                         ]}
                       >
-                        {msg.content}
-                      </Text>
-                    </View>
+                        {msg.imageUri && (
+                          <Image source={{ uri: msg.imageUri }} style={styles.bubbleImage} resizeMode="cover" />
+                        )}
+                        {msg.role === 'assistant' ? (
+                          <ResponseBubble
+                            content={msg.content}
+                            topic={msg.topic}
+                            mode={msg.mode}
+                            tools={msg.tools}
+                            graphs={msg.graphs}
+                            onExplainMore={(stepNum, stepContent) => {
+                              setChatInput(`Can you explain Step ${stepNum} more simply? The part about: ${stepContent.slice(0, 100)}`);
+                            }}
+                          />
+                        ) : (
+                          <Text style={[styles.bubbleText, styles.userBubbleText]}>{msg.content}</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Reactions below assistant messages */}
+                  {msg.role === 'assistant' && (
+                    <MessageReactions
+                      messageId={msg.id}
+                      onHelpful={() => {}}
+                      onConfused={() => handleStillConfused(msg.content)}
+                    />
                   )}
                 </View>
               ))}
 
-              {/* Thinking indicator */}
-              {(chatLoading || analyzing) && (
-                <View style={[styles.messageBubble, styles.assistantBubble]}>
-                  <View style={styles.tutorAvatar}>
-                    <Ionicons name="school" size={14} color={Colors.primary} />
-                  </View>
-                  <View style={[styles.bubbleContent, styles.assistantBubbleContent]}>
-                    <View style={styles.thinkingRow}>
-                      <Animated.View style={[styles.thinkingDot, { opacity: dotAnim }]} />
-                      <Text style={styles.thinkingText}>
-                        {analyzing ? 'Solving your problem...' : 'Thinking...'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              )}
+              {/* Suggestion chips after last assistant message */}
+              {chatMessages.length > 0 && !chatLoading && !analyzing && (() => {
+                const lastMsg = chatMessages[chatMessages.length - 1];
+                if (lastMsg?.role === 'assistant' && lastMsg.suggestions?.length) {
+                  return (
+                    <SuggestionChips
+                      suggestions={lastMsg.suggestions}
+                      onPress={(text) => {
+                        setChatInput(text);
+                        setTimeout(() => {
+                          setChatInput(text);
+                        }, 100);
+                      }}
+                    />
+                  );
+                }
+                return null;
+              })()}
+
+              {/* Animated tool status */}
+              <ToolStatus isLoading={chatLoading || analyzing} />
 
               {/* Error */}
               {chatError && (
@@ -771,6 +867,31 @@ export default function DashboardScreen() {
 
         {/* ── AI Input Bar ── */}
         <View style={[styles.inputBarWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {/* Mode selector */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeScrollBar}>
+            <View style={styles.modeRowBar}>
+              {MODE_OPTIONS.map((m) => {
+                const active = selectedMode === m.key;
+                return (
+                  <TouchableOpacity
+                    key={m.label}
+                    style={[styles.modeChip, active && styles.modeChipActive]}
+                    onPress={() => setSelectedMode(m.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={m.icon as any}
+                      size={13}
+                      color={active ? Colors.white : Colors.primary}
+                    />
+                    <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
+                      {m.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
           {/* Attachment menu */}
           {attachMenuOpen && !pendingPhoto && (
             <View style={styles.attachMenu}>
@@ -866,6 +987,15 @@ export default function DashboardScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+      {/* Session Summary Modal */}
+      <SessionSummaryCard
+        visible={showSummary}
+        onClose={resetAll}
+        summary={sessionSummaryData?.summary}
+        totalProblems={sessionSummaryData?.totalProblems ?? 0}
+        successRate={sessionSummaryData?.successRate ?? 0}
+        topicsPracticed={sessionSummaryData?.topicsPracticed}
+      />
     </View>
   );
 }
@@ -1083,16 +1213,33 @@ const styles = StyleSheet.create({
   userBubble: { alignItems: 'flex-end' },
   assistantBubble: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   tutorAvatar: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 28, height: 28, borderRadius: 14,
     backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center',
     marginTop: 2,
+    flexShrink: 0,
   },
-  bubbleContent: { maxWidth: '80%', borderRadius: 18, padding: 14, overflow: 'hidden' },
-  userBubbleContent: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
+  bubbleContent: {
+    flex: 1,
+    maxWidth: '85%',
+    borderRadius: 18,
+    padding: 14,
+  },
+  userBubbleContent: {
+    backgroundColor: Colors.primary,
+    borderBottomRightRadius: 4,
+    maxWidth: '80%',
+    flex: 0,
+  },
   assistantBubbleContent: {
-    backgroundColor: Colors.card, borderBottomLeftRadius: 4,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
+    backgroundColor: Colors.card,
+    borderBottomLeftRadius: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+    flex: 1,
+    maxWidth: undefined,
   },
   bubbleImage: {
     width: '100%', height: 160, borderRadius: 12, marginBottom: 8,
@@ -1262,4 +1409,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.orange + '10', borderRadius: 10, padding: 10,
   },
   solveTipText: { flex: 1, fontSize: 13, color: Colors.text, lineHeight: 19 },
+
+  // Mode selector in input bar
+  modeScrollBar: { marginBottom: 8 },
+  modeRowBar: { flexDirection: 'row', gap: 6, paddingHorizontal: 4 },
+  modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: Colors.primaryLight || '#EDE9FF',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  modeChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  modeChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  modeChipTextActive: {
+    color: Colors.white || '#FFF',
+  },
 });

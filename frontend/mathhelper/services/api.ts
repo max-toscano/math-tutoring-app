@@ -6,7 +6,7 @@
 import { supabase } from '../lib/supabase';
 
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_TUTORING_API_URL ?? 'http://localhost:8000';
+  process.env.EXPO_PUBLIC_TUTORING_API_URL ?? 'http://localhost:8002';
 
 /**
  * Get the current Supabase access token for backend API calls.
