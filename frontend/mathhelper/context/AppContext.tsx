@@ -7,8 +7,26 @@ import React, {
   type ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { MathAnalysis } from '../services/openai';
-import type { Message } from '../services/tutoring';
+// MathAnalysis and Message types inlined (old services deleted)
+export interface MathAnalysis {
+  problem: string;
+  topic: string;
+  subject_area: string;
+  difficulty: string;
+  answer: string;
+  method: string;
+  steps: { step: number; title: string; math?: string; explanation: string; note?: string }[];
+  verification?: string;
+  concepts: string[];
+  prerequisites: string[];
+  common_mistakes: string[];
+  tip?: string;
+}
+
+export interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+}
 import type { Session, User } from '../services/auth';
 import { onAuthStateChange, getSession as getAuthSession } from '../services/auth';
 import * as db from '../services/database';

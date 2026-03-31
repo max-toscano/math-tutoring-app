@@ -3,7 +3,37 @@
  * Calls /chat/start-session, /chat/message, /chat/close-session.
  */
 
+import { Platform } from 'react-native';
 import { apiFetch, API_BASE_URL } from './api';
+
+/**
+ * Convert an image URI to base64 (works on web and native).
+ */
+export async function imageUriToBase64(
+  uri: string,
+): Promise<{ base64: string; mimeType: string }> {
+  if (Platform.OS === 'web') {
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    const mimeType = blob.type || 'image/jpeg';
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        resolve({ base64: dataUrl.split(',')[1], mimeType });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } else {
+    const FileSystem = require('expo-file-system');
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
+    return { base64, mimeType: ext === 'png' ? 'image/png' : 'image/jpeg' };
+  }
+}
 
 export interface AgentMessage {
   role: 'user' | 'assistant';

@@ -17,8 +17,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { solveFromImage } from '../../services/solve';
-import type { MathAnalysis } from '../../services/openai';
 import {
   startAgentSession,
   sendAgentMessage,
@@ -40,7 +38,6 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   imageUri?: string;
-  solveResult?: MathAnalysis;
   topic?: string;
   mode?: string;
   tools?: string[];
@@ -72,7 +69,7 @@ function formatSessionDate(iso: string) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function generateSessionTitle(messages: ChatMessage[], analysis?: MathAnalysis | null): string {
+function generateSessionTitle(messages: ChatMessage[], analysis?: any): string {
   if (analysis?.problem) {
     return analysis.problem.length > 50
       ? analysis.problem.slice(0, 47) + '...'
@@ -106,8 +103,9 @@ export default function DashboardScreen() {
 
   // Photo state
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+  const [pendingPhotoBase64, setPendingPhotoBase64] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<MathAnalysis | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   // Chat state
@@ -172,9 +170,10 @@ export default function DashboardScreen() {
     setAttachMenuOpen(false);
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') return;
-    const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.9 });
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.9, base64: true });
     if (!result.canceled) {
       setPendingPhoto(result.assets[0].uri);
+      setPendingPhotoBase64(result.assets[0].base64 ?? null);
     }
   }
 
@@ -186,9 +185,11 @@ export default function DashboardScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 0.9,
+      base64: true,
     });
     if (!result.canceled) {
       setPendingPhoto(result.assets[0].uri);
+      setPendingPhotoBase64(result.assets[0].base64 ?? null);
     }
   }
 
@@ -258,27 +259,41 @@ export default function DashboardScreen() {
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
     setPendingPhoto(null);
+    setPendingPhotoBase64(null);
     setChatError(null);
     setSessionSaved(false);
 
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
     if (photo) {
+      // Send photo through the AI agent (GPT-4o vision)
       setAnalyzing(true);
       setChatLoading(true);
       try {
-        const solution = await solveFromImage(photo, text || undefined);
-        setAnalysisResult(solution);
-        setExpandedSteps(new Set());
+        if (!agentSessionId) throw new Error('Session not started');
+        if (!pendingPhotoBase64) throw new Error('Photo not ready');
+        const result = await sendAgentMessage(agentSessionId, text || 'Solve this math problem from the photo', {
+          selectedMode: selectedMode ?? undefined,
+          conversationHistory,
+          imageBase64: pendingPhotoBase64,
+        });
 
-        // Build a readable message from the structured solution
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: solution.answer,
-          solveResult: solution,
+          content: result.response,
+          topic: result.topic ?? undefined,
+          mode: result.mode ?? undefined,
+          tools: result.tools_used,
+          graphs: result.graphs,
+          suggestions: result.suggestions,
         };
         setChatMessages((prev) => [...prev, assistantMsg]);
+        setConversationHistory((prev) => [
+          ...prev,
+          { role: 'user' as const, content: text || '[photo of math problem]' },
+          { role: 'assistant' as const, content: result.response },
+        ]);
       } catch (e: any) {
         setChatError(e.message ?? 'Something went wrong. Please try again.');
       } finally {
@@ -742,56 +757,13 @@ export default function DashboardScreen() {
                       msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
                     ]}
                   >
-                    {msg.role === 'assistant' && !msg.solveResult && (
+                    {msg.role === 'assistant' && (
                       <View style={styles.tutorAvatar}>
                         <Ionicons name="school" size={14} color={Colors.primary} />
                       </View>
                     )}
 
-                    {msg.solveResult ? (
-                      <View style={styles.solveCard}>
-                        <View style={styles.solveAnswerCard}>
-                          <View style={styles.solveAnswerHeader}>
-                            <Ionicons name="checkmark-circle" size={20} color={Colors.green} />
-                            <Text style={styles.solveAnswerLabel}>Answer</Text>
-                          </View>
-                          <Text style={styles.solveAnswerText}>{msg.solveResult.answer}</Text>
-                          <View style={styles.solveMetaRow}>
-                            <View style={[styles.solvePill, { backgroundColor: Colors.primary + '15' }]}>
-                              <Text style={[styles.solvePillText, { color: Colors.primary }]}>{msg.solveResult.topic}</Text>
-                            </View>
-                            <View style={[styles.solvePill, { backgroundColor: Colors.orange + '15' }]}>
-                              <Text style={[styles.solvePillText, { color: Colors.orange }]}>{msg.solveResult.difficulty}</Text>
-                            </View>
-                          </View>
-                        </View>
-                        <View style={styles.solveStepsCard}>
-                          <Text style={styles.solveSectionLabel}>Steps</Text>
-                          {msg.solveResult.steps.map((step) => (
-                            <TouchableOpacity key={step.step} style={styles.solveStep} onPress={() => {
-                              setExpandedSteps((prev) => {
-                                const next = new Set(prev);
-                                next.has(step.step) ? next.delete(step.step) : next.add(step.step);
-                                return next;
-                              });
-                            }} activeOpacity={0.7}>
-                              <View style={styles.solveStepHeader}>
-                                <View style={styles.solveStepNumber}><Text style={styles.solveStepNumberText}>{step.step}</Text></View>
-                                <Text style={styles.solveStepTitle}>{step.title}</Text>
-                                <Ionicons name={expandedSteps.has(step.step) ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMuted} />
-                              </View>
-                              {step.math && <View style={styles.solveStepMath}><Text style={styles.solveStepMathText}>{step.math}</Text></View>}
-                              {expandedSteps.has(step.step) && (
-                                <View style={styles.solveStepExpanded}>
-                                  <Text style={styles.solveStepExplanation}>{step.explanation}</Text>
-                                </View>
-                              )}
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    ) : (
-                      <View
+                    <View
                         style={[
                           styles.bubbleContent,
                           msg.role === 'user' ? styles.userBubbleContent : styles.assistantBubbleContent,
@@ -815,7 +787,6 @@ export default function DashboardScreen() {
                           <Text style={[styles.bubbleText, styles.userBubbleText]}>{msg.content}</Text>
                         )}
                       </View>
-                    )}
                   </View>
 
                   {/* Reactions below assistant messages */}

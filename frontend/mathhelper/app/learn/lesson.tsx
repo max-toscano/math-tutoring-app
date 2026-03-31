@@ -23,7 +23,7 @@ import {
   type LessonQuestion,
   type GraphData,
 } from '../../services/learn';
-import { RichMessageRenderer } from '../../components/chat/RichMessageRenderer';
+import MathRenderer from '../../components/MathRenderer';
 import { replaceMathSymbols } from '../../utils/mathText';
 
 interface ChatMessage {

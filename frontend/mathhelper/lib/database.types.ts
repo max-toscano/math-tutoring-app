@@ -5,7 +5,7 @@
  * For now this hand-written version keeps us moving.
  */
 
-import type { MathAnalysis } from '../services/openai';
+import type { MathAnalysis } from '../context/AppContext';
 
 export interface Database {
   public: {
