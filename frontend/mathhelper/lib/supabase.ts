@@ -31,6 +31,10 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     storage,
     autoRefreshToken: true,
     persistSession: typeof window !== 'undefined',
-    detectSessionInUrl: false,
+    // On web: true — Supabase auto-reads tokens from the URL fragment (#access_token=...)
+    //   when the user clicks the password-reset email link and gets redirected back.
+    // On mobile: false — React Native doesn't have browser-style URLs,
+    //   so we handle deep links manually in _layout.tsx instead.
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });

@@ -27,8 +27,11 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
 }
+import { Platform } from 'react-native';
 import type { Session, User } from '../services/auth';
 import { onAuthStateChange, getSession as getAuthSession } from '../services/auth';
+// ↑ We import onAuthStateChange which now passes the event type
+// (e.g. 'PASSWORD_RECOVERY') along with the session. See auth.ts.
 import * as db from '../services/database';
 import { uploadImage, getImageUrl } from '../services/storage';
 
@@ -72,6 +75,22 @@ interface AppContextValue {
   session: Session | null;
   authLoading: boolean;
 
+  // Password recovery mode
+  // ──────────────────────────────────────────────────────────────────
+  // When the user clicks a password-reset link in their email, Supabase
+  // gives them a valid session (they're technically "logged in"). But we
+  // DON'T want to send them to the main app — we want to send them to
+  // the reset-password screen so they can type a new password.
+  //
+  // This flag tells the auth gate: "yes this user has a session, but
+  // they're in the middle of resetting their password — don't redirect
+  // them to the tabs."
+  //
+  // clearPasswordRecovery() is called after they successfully set their
+  // new password, which lets the auth gate redirect them normally.
+  isRecoveringPassword: boolean;
+  clearPasswordRecovery: () => void;
+
   // Saved items
   savedItems: SavedItem[];
   isLoading: boolean;
@@ -96,12 +115,61 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Password recovery flag — see the interface comment above for explanation.
+  //
+  // THE FIX: We check the URL hash RIGHT HERE, in the initial useState call,
+  // not in an async event listener. Here's why:
+  //
+  // When the user clicks the email link, the browser navigates to something like:
+  //   http://localhost:8081/reset-password#access_token=eyJ...&type=recovery
+  //
+  // The page loads fresh. Supabase's createClient() runs (in supabase.ts) and
+  // sees detectSessionInUrl=true, so it reads the URL hash, finds the tokens,
+  // and fires the PASSWORD_RECOVERY event. BUT — this all happens BEFORE React
+  // mounts any components and BEFORE our onAuthStateChange listener is registered.
+  //
+  // So the event fires into the void — nobody catches it. By the time our
+  // listener is ready, the event already happened. The auth gate sees a logged-in
+  // user and sends them to tabs.
+  //
+  // The solution: check window.location.hash SYNCHRONOUSLY in the initial state.
+  // useState(initialValue) runs during the very first render, before any effects.
+  // If the URL contains "type=recovery", we start with isRecoveringPassword=true,
+  // so the auth gate NEVER gets a chance to redirect to tabs.
+  //
+  // This only applies to web — on mobile, deep links are handled differently
+  // (via Linking.addEventListener in _layout.tsx).
+  //
+  const [isRecoveringPassword, setIsRecoveringPassword] = useState(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return window.location.hash.includes('type=recovery');
+    }
+    return false;
+  });
+  const clearPasswordRecovery = useCallback(() => setIsRecoveringPassword(false), []);
+
   // Data state
   const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
   const [sessions, setSessions] = useState<TutoringSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // ── Auth listener ──
+  // ── Auth listener ──────────────────────────────────────────────────────
+  //
+  // This runs once when the app starts. It does two things:
+  //
+  //   1. getAuthSession() — checks if there's a saved session from a
+  //      previous app launch (stored in AsyncStorage). If yes, the user
+  //      is still logged in without needing to re-enter credentials.
+  //
+  //   2. onAuthStateChange() — subscribes to future auth events. Whenever
+  //      the user signs in, signs out, or clicks a password-reset link,
+  //      this callback fires with the event name and new session.
+  //
+  //      We now check for the 'PASSWORD_RECOVERY' event specifically.
+  //      When detected, we set isRecoveringPassword = true, which tells
+  //      the AuthGate in _layout.tsx to let the user stay on the
+  //      reset-password screen instead of redirecting to the main app.
+  //
   useEffect(() => {
     getAuthSession().then((session) => {
       setAuthSession(session);
@@ -109,9 +177,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setAuthLoading(false);
     });
 
-    const subscription = onAuthStateChange((session) => {
+    const subscription = onAuthStateChange((event, session) => {
       setAuthSession(session);
       setUser(session?.user ?? null);
+
+      // Detect password recovery — user clicked the reset link in their email.
+      // Supabase fires 'PASSWORD_RECOVERY' after exchanging the recovery
+      // token for a full session. We flip the flag so the auth gate knows
+      // to keep the user on the reset-password screen.
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveringPassword(true);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -282,6 +358,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         user,
         session: authSession,
         authLoading,
+        isRecoveringPassword,
+        clearPasswordRecovery,
         savedItems,
         isLoading,
         saveAnalysis,

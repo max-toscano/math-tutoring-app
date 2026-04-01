@@ -1,0 +1,25 @@
+# Web framework
+fastapi>=0.115.0
+uvicorn>=0.27.0
+
+# LLM
+openai>=1.12.0
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Math tools
+sympy>=1.12
+numpy>=1.26.0
+
+# Auth
+PyJWT[crypto]>=2.8.0
+
+# Config
+python-dotenv>=1.1.0
+
+# Data validation
+pydantic>=2.6.0

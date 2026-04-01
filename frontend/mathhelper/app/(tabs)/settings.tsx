@@ -166,38 +166,13 @@ export default function SettingsScreen() {
           />
         </SettingSection>
 
-        {/* Learning Preferences */}
-        <SettingSection title="Learning">
-          <SettingRow
-            icon="speedometer-outline"
-            iconColor={Colors.secondary}
-            label="Difficulty"
-            value="Intermediate"
-          />
-          <View style={styles.rowDivider} />
+        {/* Language */}
+        <SettingSection title="Language">
           <SettingRow
             icon="language-outline"
             iconColor={Colors.teal}
             label="Language"
             value="English"
-          />
-          <View style={styles.rowDivider} />
-          <SettingRow
-            icon="analytics-outline"
-            iconColor={Colors.primary}
-            label="Show Step-by-Step"
-            hasToggle
-            toggleValue={true}
-            showChevron={false}
-          />
-          <View style={styles.rowDivider} />
-          <SettingRow
-            icon="timer-outline"
-            iconColor={Colors.orange}
-            label="Quiz Time Limit"
-            hasToggle
-            toggleValue={true}
-            showChevron={false}
           />
         </SettingSection>
 

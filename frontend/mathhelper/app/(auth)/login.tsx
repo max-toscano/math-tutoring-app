@@ -119,6 +119,19 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
+          {/* ── Forgot Password link ──────────────────────────────────
+               Navigates to the forgot-password screen where the user
+               enters their email to receive a password reset link.
+               Uses router.push (not replace) so they can tap "back"
+               to return here if they change their mind.
+          */}
+          <TouchableOpacity
+            onPress={() => router.push('/(auth)/forgot-password')}
+            style={styles.forgotLink}
+          >
+            <Text style={styles.forgotText}>Forgot password?</Text>
+          </TouchableOpacity>
+
           <View style={styles.footer}>
             <Text style={styles.footerText}>Don't have an account?</Text>
             <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
@@ -226,6 +239,14 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 16,
     fontWeight: '600',
+  },
+  forgotLink: {
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  forgotText: {
+    color: Colors.primary,
+    fontSize: 14,
   },
   footer: {
     flexDirection: 'row',
