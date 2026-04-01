@@ -60,11 +60,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="learn"
+        name="calculator"
         options={{
-          title: 'Learn',
+          title: 'Calculator',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="book" color={color} size={size} />
+            <TabIcon name="calculator" color={color} size={size} />
           ),
         }}
       />
