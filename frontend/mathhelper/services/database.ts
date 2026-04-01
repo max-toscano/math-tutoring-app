@@ -36,6 +36,41 @@ export interface SavedItem {
   savedAt: string;
 }
 
+// ─── Profile ────────────────────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: string;
+  display_name: string | null;
+  grade_level: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+}
+
+export async function fetchProfile(userId: string): Promise<UserProfile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, display_name, grade_level, avatar_url, bio')
+    .eq('id', userId)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') return null;
+    throw error;
+  }
+  return data as UserProfile;
+}
+
+export async function updateProfile(
+  userId: string,
+  updates: Partial<Pick<UserProfile, 'display_name' | 'grade_level' | 'avatar_url' | 'bio'>>,
+): Promise<void> {
+  const { error } = await supabase
+    .from('profiles')
+    .update(updates)
+    .eq('id', userId);
+  if (error) throw error;
+}
+
 // ─── Saved Items ────────────────────────────────────────────────────────────
 
 export async function fetchSavedItems(): Promise<SavedItem[]> {

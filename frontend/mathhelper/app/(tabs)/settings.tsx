@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -5,10 +6,16 @@ import {
   TouchableOpacity,
   StyleSheet,
   Switch,
+  Image,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
+import { useAppContext } from '../../context/AppContext';
+import { fetchProfile, type UserProfile } from '../../services/database';
+import { getImageUrl } from '../../services/storage';
+import { signOut } from '../../services/auth';
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -31,11 +38,12 @@ function SettingRow({
   value,
   hasToggle = false,
   toggleValue = false,
+  onPress,
   showChevron = true,
   danger = false,
 }: SettingRowProps) {
   return (
-    <TouchableOpacity style={styles.settingRow} activeOpacity={hasToggle ? 1 : 0.7}>
+    <TouchableOpacity style={styles.settingRow} activeOpacity={hasToggle ? 1 : 0.7} onPress={onPress}>
       <View style={[styles.settingIconWrap, { backgroundColor: iconColor + '18' }]}>
         <Ionicons name={icon} size={18} color={danger ? Colors.secondary : iconColor} />
       </View>
@@ -81,6 +89,62 @@ const ACHIEVEMENTS = [
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { user } = useAppContext();
+
+  // ─── Load real profile data ───────────────────────────────────────────────
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const p = await fetchProfile(user.id);
+        setProfile(p);
+        if (p?.avatar_url) {
+          try {
+            const signed = await getImageUrl(p.avatar_url);
+            setAvatarUri(signed);
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    })();
+  }, [user]);
+
+  // Refresh profile when returning from edit-profile screen
+  useEffect(() => {
+    // Re-fetch each time the screen is focused (settings tab is visible)
+    const interval = setInterval(async () => {
+      if (!user) return;
+      try {
+        const p = await fetchProfile(user.id);
+        if (p && (p.display_name !== profile?.display_name || p.avatar_url !== profile?.avatar_url || p.grade_level !== profile?.grade_level)) {
+          setProfile(p);
+          if (p.avatar_url) {
+            try { setAvatarUri(await getImageUrl(p.avatar_url)); } catch {}
+          } else {
+            setAvatarUri(null);
+          }
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [user, profile]);
+
+  const displayName = profile?.display_name || user?.email || 'Student';
+  const initials = displayName
+    .split(' ')
+    .map((w: string) => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+
+  async function handleSignOut() {
+    try {
+      await signOut();
+    } catch {}
+  }
 
   return (
     <View style={styles.container}>
@@ -94,23 +158,25 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Card */}
-        <TouchableOpacity style={styles.profileCard} activeOpacity={0.85}>
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarText}>AJ</Text>
-            <View style={styles.profileBadge}>
-              <Ionicons name="star" size={10} color={Colors.white} />
+        {/* Profile Card — tapping navigates to the edit profile screen */}
+        <TouchableOpacity
+          style={styles.profileCard}
+          activeOpacity={0.85}
+          onPress={() => router.push('/edit-profile')}
+        >
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.profileAvatarImg} />
+          ) : (
+            <View style={styles.profileAvatar}>
+              <Text style={styles.profileAvatarText}>{initials}</Text>
             </View>
-          </View>
+          )}
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>Alex Johnson</Text>
-            <Text style={styles.profileMeta}>Grade 11  ·  Intermediate</Text>
-            <View style={styles.profileLevelRow}>
-              <View style={styles.profileLevelBadge}>
-                <Text style={styles.profileLevelText}>Level 12</Text>
-              </View>
-              <Text style={styles.profileXP}>3,240 XP</Text>
-            </View>
+            <Text style={styles.profileName}>{displayName}</Text>
+            <Text style={styles.profileMeta}>
+              {profile?.grade_level ?? 'No grade set'}
+              {profile?.bio ? `  ·  ${profile.bio.slice(0, 30)}${profile.bio.length > 30 ? '...' : ''}` : ''}
+            </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
         </TouchableOpacity>
@@ -143,13 +209,14 @@ export default function SettingsScreen() {
             icon="person-outline"
             iconColor={Colors.primary}
             label="Edit Profile"
+            onPress={() => router.push('/edit-profile')}
           />
           <View style={styles.rowDivider} />
           <SettingRow
             icon="school-outline"
             iconColor={Colors.teal}
             label="Grade Level"
-            value="Grade 11"
+            value={profile?.grade_level ?? 'Not set'}
           />
           <View style={styles.rowDivider} />
           <SettingRow
@@ -283,6 +350,7 @@ export default function SettingsScreen() {
               label="Sign Out"
               showChevron={false}
               danger
+              onPress={handleSignOut}
             />
           </View>
         </View>
@@ -331,6 +399,13 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
     borderWidth: 1,
+    borderColor: Colors.primaryLight,
+  },
+  profileAvatarImg: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    borderWidth: 2,
     borderColor: Colors.primaryLight,
   },
   profileAvatar: {
