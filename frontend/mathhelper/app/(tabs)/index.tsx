@@ -30,7 +30,6 @@ import ResponseBubble from '../../components/ResponseBubble';
 import SuggestionChips from '../../components/SuggestionChips';
 import ToolStatus from '../../components/ToolStatus';
 import MessageReactions from '../../components/MessageReactions';
-import SessionSummaryCard from '../../components/SessionSummaryCard';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface ChatMessage {
@@ -117,15 +116,6 @@ export default function DashboardScreen() {
 
   // Agent session
   const [agentSessionId, setAgentSessionId] = useState<string | null>(null);
-
-  // Session summary modal
-  const [showSummary, setShowSummary] = useState(false);
-  const [sessionSummaryData, setSessionSummaryData] = useState<{
-    summary?: string;
-    totalProblems: number;
-    successRate: number;
-    topicsPracticed?: string[];
-  } | null>(null);
 
   useEffect(() => {
     startAgentSession()
@@ -393,30 +383,15 @@ export default function DashboardScreen() {
   }
 
   async function handleExit() {
-    // Close session and show summary before resetting
+    // Close session and reset
     if (agentSessionId && chatMessages.some((m) => m.role === 'assistant')) {
       try {
-        const closeData = await closeAgentSession(agentSessionId);
-        // Collect topics from messages
-        const topics = chatMessages
-          .filter((m) => m.topic)
-          .map((m) => m.topic!)
-          .filter((t, i, a) => a.indexOf(t) === i); // unique
-
-        setSessionSummaryData({
-          summary: closeData.session_summary ?? undefined,
-          totalProblems: closeData.total_problems,
-          successRate: closeData.success_rate,
-          topicsPracticed: topics.length > 0 ? topics : undefined,
-        });
-        setShowSummary(true);
+        await closeAgentSession(agentSessionId);
       } catch {
-        // If close fails, just reset
-        resetAll();
+        // Ignore close errors
       }
-    } else {
-      resetAll();
     }
+    resetAll();
   }
 
   function resetAll() {
@@ -432,8 +407,6 @@ export default function DashboardScreen() {
     setCurrentSessionId(null);
     setSessionSaved(false);
     setAttachMenuOpen(false);
-    setShowSummary(false);
-    setSessionSummaryData(null);
     // Start fresh agent session
     startAgentSession()
       .then(({ session_id }) => setAgentSessionId(session_id))
@@ -958,15 +931,6 @@ export default function DashboardScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
-      {/* Session Summary Modal */}
-      <SessionSummaryCard
-        visible={showSummary}
-        onClose={resetAll}
-        summary={sessionSummaryData?.summary}
-        totalProblems={sessionSummaryData?.totalProblems ?? 0}
-        successRate={sessionSummaryData?.successRate ?? 0}
-        topicsPracticed={sessionSummaryData?.topicsPracticed}
-      />
     </View>
   );
 }
