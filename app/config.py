@@ -28,5 +28,9 @@ OPENSTAX_DATA_PATH = os.getenv("OPENSTAX_DATA_PATH", "./data/openstax")
 # ── Embedding ─────────────────────────────────────────────────────────────
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
+# ── Google Custom Search ──────────────────────────────────────────────────
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
+
 # ── Dev Mode ──────────────────────────────────────────────────────────────
 DEV_MODE = os.getenv("DEV_MODE", "true").lower() == "true"

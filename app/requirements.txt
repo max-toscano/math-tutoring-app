@@ -15,6 +15,9 @@ psycopg2-binary>=2.9.0
 sympy>=1.12
 numpy>=1.26.0
 
+# Google APIs
+google-api-python-client>=2.100.0
+
 # Auth
 PyJWT[crypto]>=2.8.0
 

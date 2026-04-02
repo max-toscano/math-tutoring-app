@@ -1,6 +1,6 @@
 """
 tools/math/web_search.py
-Web search tool using OpenAI's built-in web search.
+Web search tool using Google Custom Search API.
 
 This is a real tool — the LLM cannot access the internet on its own.
 Useful for: looking up specific theorems, finding current educational
@@ -10,81 +10,92 @@ worked examples of specific problem types.
 
 import json
 import logging
+from typing import Optional
 
-from openai import OpenAI
+from googleapiclient.discovery import build
 from langchain_core.tools import tool
-from app.config import OPENAI_API_KEY, OPENAI_MODEL
+from app.config import GOOGLE_API_KEY, GOOGLE_SEARCH_ENGINE_ID
 
 logger = logging.getLogger(__name__)
 
-_client = OpenAI(api_key=OPENAI_API_KEY)
 
-
-def search_web(query: str) -> dict:
+def search_web(query: str, num_results: int = 5) -> dict:
     """
-    Search the web for math-related information using OpenAI's
-    web search tool calling feature.
+    Search the web for math-related information using Google Custom Search API.
 
     Args:
         query: The search query (e.g. "proof of Pythagorean theorem",
                "integration by parts examples", "double angle formula derivation")
+        num_results: Number of search results to return (max 10)
 
     Returns:
         {
             "query": str,
-            "result": str,          # The answer with citations
-            "annotations": list,    # Source URLs if available
+            "results": list[dict],   # List of search results with title, snippet, link
+            "total_results": int,    # Estimated total results
             "error": str | None
         }
     """
+    if not GOOGLE_API_KEY or not GOOGLE_SEARCH_ENGINE_ID:
+        logger.error("Google API credentials not configured")
+        return {
+            "query": query,
+            "results": [],
+            "total_results": 0,
+            "error": "Google Search not configured. Set GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID in .env",
+        }
+
     try:
-        response = _client.responses.create(
-            model=OPENAI_MODEL,
-            tools=[{"type": "web_search_preview"}],
-            input=f"Search for math educational content: {query}",
-        )
+        # Build the Google Custom Search service
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
 
-        # Extract text and annotations from the response
-        result_text = ""
-        annotations = []
+        # Execute the search
+        result = service.cse().list(
+            q=query,
+            cx=GOOGLE_SEARCH_ENGINE_ID,
+            num=min(num_results, 10),  # Google allows max 10 per request
+        ).execute()
 
-        for item in response.output:
-            if item.type == "message":
-                for block in item.content:
-                    if block.type == "output_text":
-                        result_text = block.text
-                        # Collect citation URLs
-                        if hasattr(block, "annotations"):
-                            for ann in block.annotations:
-                                if hasattr(ann, "url"):
-                                    annotations.append({
-                                        "title": getattr(ann, "title", ""),
-                                        "url": ann.url,
-                                    })
+        # Parse results
+        search_results = []
+        if "items" in result:
+            for item in result["items"]:
+                search_results.append({
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", ""),
+                    "link": item.get("link", ""),
+                    "displayLink": item.get("displayLink", ""),
+                })
+
+        total_results = int(result.get("searchInformation", {}).get("totalResults", 0))
 
         return {
             "query": query,
-            "result": result_text,
-            "annotations": annotations,
+            "results": search_results,
+            "total_results": total_results,
             "error": None,
         }
 
     except Exception as e:
-        logger.error(f"Web search failed: {e}")
+        logger.error(f"Google search failed: {e}")
         return {
             "query": query,
-            "result": None,
-            "annotations": [],
+            "results": [],
+            "total_results": 0,
             "error": str(e),
         }
 
 
 @tool
 def math_web_search(query: str) -> str:
-    """Search the web for math concepts, theorems, proofs, or worked examples. Use when you need to verify a formula, find a specific theorem, or look up a concept you're not confident about.
+    """Search the web for math concepts, theorems, proofs, or worked examples using Google Search.
+    Use when you need to verify a formula, find a specific theorem, or look up a concept you're not confident about.
 
     Args:
         query: What to search for (e.g. 'proof of law of cosines', 'integration by parts worked examples')
+
+    Returns:
+        JSON string with search results including titles, snippets, and links
     """
-    result = search_web(query)
-    return json.dumps(result)
+    result = search_web(query, num_results=5)
+    return json.dumps(result, indent=2)
