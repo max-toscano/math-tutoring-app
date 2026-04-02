@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/Colors';
 import MathRenderer from './MathRenderer';
 import DesmosGraph from './DesmosGraph';
+import EnhancedStepCards from './steps/EnhancedStepCards';
 import type { GraphOutput } from '../services/agent';
 
 // Clipboard: use navigator.clipboard on web, expo-clipboard on native if installed
@@ -72,11 +73,26 @@ const TOOL_ICONS: Record<string, string> = {
 function ContentRenderer({
   content,
   graphs,
+  onExplainMore,
 }: {
   content: string;
   graphs?: GraphOutput[];
+  onExplainMore?: (stepNumber: number, stepContent: string) => void;
 }) {
-  // Single MathRenderer for the entire response.
+  // Try to render as enhanced step cards first
+  const enhancedSteps = (
+    <EnhancedStepCards
+      content={content}
+      onExplainMore={onExplainMore}
+    />
+  );
+
+  // If steps are detected, show step cards; otherwise, fall back to regular math render
+  if (enhancedSteps) {
+    return enhancedSteps;
+  }
+
+  // Fallback: Single MathRenderer for the entire response.
   // Formula highlighting happens via CSS inside the iframe.
   // No splitting into multiple iframes — that causes height glitches.
   return <MathRenderer content={content} graphs={graphs} isUser={false} />;
@@ -118,7 +134,7 @@ export default function ResponseBubble({ content, topic, mode, tools, graphs, on
       )}
 
       {/* Rendered content with KaTeX math */}
-      <ContentRenderer content={content} graphs={graphs} />
+      <ContentRenderer content={content} graphs={graphs} onExplainMore={onExplainMore} />
 
       {/* Interactive Desmos graphs */}
       {graphs && graphs.length > 0 && (
