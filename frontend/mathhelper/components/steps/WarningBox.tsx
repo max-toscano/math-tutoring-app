@@ -4,6 +4,7 @@
 
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import MathRenderer from '../MathRenderer';
 
 interface WarningBoxProps {
   text: string;
@@ -17,7 +18,9 @@ export default function WarningBox({ text }: WarningBoxProps) {
       </View>
       <View style={styles.textWrap}>
         <Text style={styles.label}>Watch Out</Text>
-        <Text style={styles.text}>{text}</Text>
+        <View style={styles.mathContainer}>
+          <MathRenderer content={text} isUser={false} />
+        </View>
       </View>
     </View>
   );
@@ -57,5 +60,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#1A1A2E',
     lineHeight: 19,
+  },
+  mathContainer: {
+    flex: 1,
   },
 });

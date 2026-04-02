@@ -4,6 +4,7 @@
 
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import MathRenderer from '../MathRenderer';
 
 interface InsightBoxProps {
   text: string;
@@ -17,7 +18,9 @@ export default function InsightBox({ text }: InsightBoxProps) {
       </View>
       <View style={styles.textWrap}>
         <Text style={styles.label}>Key Insight</Text>
-        <Text style={styles.text}>{text}</Text>
+        <View style={styles.mathContainer}>
+          <MathRenderer content={text} isUser={false} />
+        </View>
       </View>
     </View>
   );
@@ -57,5 +60,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#92400E',
     lineHeight: 19,
+  },
+  mathContainer: {
+    flex: 1,
   },
 });
