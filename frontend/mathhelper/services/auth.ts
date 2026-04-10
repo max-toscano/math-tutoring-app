@@ -1,208 +1,288 @@
 /**
- * Auth service — wraps Supabase Auth for sign-up, sign-in, sign-out,
- * and password reset.
+ * services/auth.ts
+ * Auth service — wraps AWS Cognito (via aws-amplify v6) for sign-up,
+ * sign-in, sign-out, email confirmation, and password reset.
  *
- * Profile creation is handled here (not via database trigger).
+ * ── Why this file exists ─────────────────────────────────────────────────────
  *
- * ── How Supabase Auth works under the hood ──────────────────────────────
+ * Rather than importing aws-amplify directly in every screen, all auth
+ * logic lives here. Screens call these functions and never touch Cognito
+ * directly. If we ever swap auth providers again, only this file changes.
  *
- * Supabase Auth is a layer on top of PostgreSQL's auth.users table.
- * When a user signs up, Supabase:
- *   1. Creates a row in auth.users with their email + hashed password
- *   2. Returns a JWT (JSON Web Token) — a signed string that proves
- *      "this person is user X"
- *   3. The JWT is stored on the device (AsyncStorage for React Native)
- *   4. Every API call includes this JWT in the Authorization header
- *   5. Your backend validates the JWT to know who's making the request
+ * ── How Cognito works under the hood ────────────────────────────────────────
  *
- * JWTs expire (default: 1 hour). The Supabase client automatically
- * "refreshes" them using a refresh_token before they expire, so the
- * user stays logged in. This happens invisibly — you don't need to
- * code anything for it (autoRefreshToken: true in supabase.ts).
+ * 1. A user signs up with email + password.
+ * 2. Cognito sends a 6-digit verification code to their email.
+ * 3. The user must enter that code (confirmSignUp) before they can sign in.
+ * 4. On sign-in, Cognito issues three tokens:
+ *      • idToken   — proves who the user is (contains sub, email, etc.)
+ *                    → we send this to our backend API as the Bearer token
+ *      • accessToken — used to call Cognito's own APIs (e.g. change password)
+ *      • refreshToken — used to get new id/access tokens when they expire (~1hr)
+ *    Amplify stores these in AsyncStorage and auto-refreshes them silently.
+ * 5. Password reset is code-based: Cognito emails a 6-digit code, the user
+ *    types it in the app along with their new password. No magic links.
+ *    No deep link handling needed.
+ *
+ * ── Key differences from Supabase auth ──────────────────────────────────────
+ *
+ * Supabase                       → Cognito equivalent
+ * ─────────────────────────────────────────────────────
+ * signUp()                       → signUp() here (same name)
+ * signIn()                       → signIn() here (same name)
+ * signOut()                      → signOut() here (same name)
+ * getSession() → { user, token } → getSession() here returns { user }
+ * updatePassword(newPw)          → REMOVED. Use confirmPasswordReset() instead.
+ *                                   (Cognito password-change-within-session uses
+ *                                    updatePassword from aws-amplify/auth directly
+ *                                    — not needed for our reset flow)
+ * requestPasswordReset(email)    → same name, but sends a CODE not a magic link
+ * onAuthStateChange(cb)          → same name, but uses Hub internally
+ * PASSWORD_RECOVERY event        → GONE. No deep links = no recovery event.
+ *
+ * ── The User type ────────────────────────────────────────────────────────────
+ *
+ * We define our own User interface (below) instead of exposing Cognito's
+ * AuthUser directly. This keeps the rest of the app insulated from Cognito
+ * internals. Cognito's AuthUser has:
+ *   • userId   — the "sub" UUID (unique ID, used as our database FK)
+ *   • username — the email address (used as the login credential)
+ *
+ * We map these to:
+ *   • id    — maps from userId (so AppContext's user.id keeps working)
+ *   • email — maps from username
  */
-import { supabase } from '../lib/supabase';
-import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
-import * as Linking from 'expo-linking';
 
-export type { Session, User };
+import {
+  signIn as amplifySignIn,
+  signOut as amplifySignOut,
+  signUp as amplifySignUp,
+  confirmSignUp as amplifyConfirmSignUp,
+  resetPassword,
+  confirmResetPassword,
+  getCurrentUser,
+  fetchAuthSession,
+  type AuthUser,
+} from 'aws-amplify/auth';
+import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid';
+import { Hub } from 'aws-amplify/utils';
 
-export async function signUp(email: string, password: string, displayName?: string) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/**
+ * Our app's user type. Hides Cognito's AuthUser so screens never
+ * import from aws-amplify directly.
+ *
+ *   user.id    → Cognito sub (UUID) — used as the FK in our database
+ *   user.email → the email address they signed up with
+ */
+export interface User {
+  id: string;
+  email: string;
+}
+
+/**
+ * Cognito has no "session" object like Supabase does. We define a minimal
+ * Session so AppContext doesn't need to change its types yet.
+ * It just wraps the User.
+ */
+export interface Session {
+  user: User;
+}
+
+// ── Internal helper ───────────────────────────────────────────────────────────
+
+/**
+ * Converts Cognito's AuthUser to our app's User type.
+ * Cognito's username field is the email (that's how we configured the User Pool).
+ */
+function toUser(cognitoUser: AuthUser): User {
+  return {
+    id: cognitoUser.userId,       // Cognito "sub" — stable UUID for this user
+    email: cognitoUser.username,  // email (the sign-up credential)
+  };
+}
+
+// ── Sign Up ───────────────────────────────────────────────────────────────────
+//
+// Step 1 of 2 for new users. After this succeeds, Cognito sends a 6-digit
+// code to the user's email. They CANNOT sign in until they confirm.
+// → Navigate to the confirm-signup screen after calling this.
+//
+// displayName is stored as the standard Cognito "name" attribute.
+// Make sure "name" is an allowed attribute in your Cognito User Pool settings.
+//
+export async function signUp(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<{ username: string }> {
+  const username = uuidv4();
+  await amplifySignUp({
+    username,
     password,
     options: {
-      data: { display_name: displayName },
+      userAttributes: {
+        email,
+        preferred_username: email,
+        ...(displayName ? { name: displayName } : {}),
+      },
     },
   });
-  if (error) throw error;
-
-  // Create profile row (trigger was unreliable, so we do it here)
-  if (data.user) {
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: data.user.id,
-        display_name: displayName ?? email,
-      }, { onConflict: 'id' });
-
-    if (profileError) {
-      console.warn('Failed to create profile:', profileError.message);
-    }
-  }
-
-  return data;
+  return { username };
+} 
+// ── Confirm Sign Up ───────────────────────────────────────────────────────────
+//
+// Step 2 of 2 for new users. The user enters the 6-digit code from their
+// email. On success, the account is activated and they can sign in.
+//
+// "email" here is the username (same value passed to signUp).
+//
+export async function confirmSignUp(email: string, code: string) {
+  return amplifyConfirmSignUp({
+    username: email,
+    confirmationCode: code,
+  });
 }
 
+// ── Sign In ───────────────────────────────────────────────────────────────────
+//
+// Authenticates the user and stores tokens in AsyncStorage.
+// Amplify auto-refreshes the idToken before it expires (~1 hour).
+//
+// On success, Hub fires a 'signedIn' event → our onAuthStateChange listener
+// picks it up and updates AppContext.
+//
 export async function signIn(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-  if (error) throw error;
-
-  // Ensure profile exists on login too (in case it was missed)
-  if (data.user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('id', data.user.id)
-      .single();
-
-    if (!profile) {
-      await supabase
-        .from('profiles')
-        .upsert({
-          id: data.user.id,
-          display_name: data.user.user_metadata?.display_name ?? data.user.email,
-        }, { onConflict: 'id' });
-    }
-  }
-
-  return data;
+  return amplifySignIn({ username: email, password });
 }
 
+// ── Sign Out ──────────────────────────────────────────────────────────────────
+//
+// Clears all stored tokens from AsyncStorage. Hub fires 'signedOut'.
+//
 export async function signOut() {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  return amplifySignOut();
 }
 
-export async function getSession(): Promise<Session | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session;
-}
-
+// ── Get User ──────────────────────────────────────────────────────────────────
+//
+// Returns the currently signed-in user, or null if nobody is signed in.
+// This reads from Amplify's token cache — no network call needed.
+//
 export async function getUser(): Promise<User | null> {
-  const { data: { user } } = await supabase.auth.getUser();
-  return user;
+  try {
+    const cognitoUser = await getCurrentUser();
+    return toUser(cognitoUser);
+  } catch {
+    return null; // Not signed in
+  }
 }
 
-// ── Password Reset ────────────────────────────────────────────────────────
+// ── Get Session ───────────────────────────────────────────────────────────────
 //
-// Password reset is a 2-step flow:
+// Returns a { user } session object (like Supabase did) so AppContext
+// doesn't need to change. Internally just wraps getUser().
 //
-//   STEP 1 — requestPasswordReset(email)
-//     • Your app calls this when the user taps "Forgot password?"
-//     • Supabase sends an email with a magic link
-//     • The link looks like:
-//         https://yourproject.supabase.co/auth/v1/verify?type=recovery&token=abc
-//     • When clicked, Supabase verifies the token, then REDIRECTS to
-//       the redirectTo URL you provide, with access/refresh tokens in
-//       the URL fragment (#access_token=xxx&refresh_token=yyy)
-//     • Your app catches this redirect via deep linking (the "mathhelper://"
-//       scheme in app.json), parses the tokens, and sets the session
-//     • This triggers the PASSWORD_RECOVERY event in onAuthStateChange
-//
-//   STEP 2 — updatePassword(newPassword)
-//     • Now the user has a valid session (from the recovery tokens)
-//     • Your app shows a "new password" form
-//     • When submitted, calls updatePassword() which tells Supabase
-//       to change the password for the currently-authenticated user
-//     • Done — user can now log in with their new password
-//
-// SECURITY NOTE: Supabase returns success even if the email doesn't exist.
-// This is intentional — it prevents "email enumeration" attacks where an
-// attacker submits random emails to discover which ones are registered.
+export async function getSession(): Promise<Session | null> {
+  const user = await getUser();
+  if (!user) return null;
+  return { user };
+}
 
-/**
- * Sends a password-reset email to the given address.
- *
- * @param email - The email address the user signed up with.
- *
- * How the redirect works:
- *   Linking.createURL('reset-password') generates a URL that opens your app:
- *     • In production:  "mathhelper://reset-password"
- *       (uses the "scheme" field from app.json)
- *     • In Expo Go dev: "exp://192.168.1.27:8081/--/reset-password"
- *       (Expo Go intercepts this and routes it to your app)
- *
- *   Supabase appends auth tokens to this URL as a fragment (#...),
- *   so the full redirect looks like:
- *     mathhelper://reset-password#access_token=eyJ...&refresh_token=abc&type=recovery
- *
- *   Your app's deep link handler (_layout.tsx) catches this URL,
- *   extracts the tokens, and calls supabase.auth.setSession().
- *
- * IMPORTANT — Supabase Dashboard config required:
- *   Go to Supabase Dashboard → Authentication → URL Configuration
- *   → add your redirect URL to the "Redirect URLs" allowlist.
- *   Without this, Supabase will REJECT the redirect and the link won't work.
- *   Add both:
- *     mathhelper://reset-password           (for production builds)
- *     exp://192.168.1.27:8081/--/reset-password  (for Expo Go dev)
- */
+// ── Get JWT Token ─────────────────────────────────────────────────────────────
+//
+// Returns the Cognito idToken as a string. This is the Bearer token we
+// send to our Python backend. The backend validates it against Cognito's
+// JWKS endpoint.
+//
+// Call this in services/api.ts instead of reading from Supabase session.
+//
+export async function getToken(): Promise<string | null> {
+  try {
+    const { tokens } = await fetchAuthSession();
+    return tokens?.idToken?.toString() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Request Password Reset (Step 1) ──────────────────────────────────────────
+//
+// Tells Cognito to send a 6-digit reset code to the user's email.
+//
+// IMPORTANT: This is NOT a magic link (unlike Supabase).
+// The user stays inside the app and types the code on the next screen.
+// No deep links, no URL parsing, no token-in-fragment handling.
+//
+// SECURITY: Cognito returns success even if the email doesn't exist —
+// prevents attackers from discovering which emails are registered.
+//
 export async function requestPasswordReset(email: string) {
-  // Linking.createURL builds the right deep-link URL for the current
-  // environment (Expo Go vs standalone build)
-  const redirectUrl = Linking.createURL('reset-password');
-
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: redirectUrl,
-  });
-  if (error) throw error;
+  await resetPassword({ username: email });
 }
 
-/**
- * Sets a new password for the currently signed-in user.
- *
- * This only works when there is an active session — which Supabase
- * automatically creates when the user clicks the password-reset email link
- * and your app calls setSession() with the recovery tokens.
- *
- * @param newPassword - Must be at least 6 characters (enforced by Supabase)
- */
-export async function updatePassword(newPassword: string) {
-  const { error } = await supabase.auth.updateUser({
-    password: newPassword,
-  });
-  if (error) throw error;
-}
-
-// ── Auth State Listener ───────────────────────────────────────────────────
+// ── Confirm Password Reset (Step 2) ──────────────────────────────────────────
 //
-// onAuthStateChange subscribes to Supabase auth events. Supabase fires
-// these events whenever the user's auth state changes:
+// The user provides: their email, the 6-digit code from the email, and
+// their new password. No active session required — the code IS the proof
+// of identity.
 //
-//   'SIGNED_IN'          → user just logged in (email/password or OAuth)
-//   'SIGNED_OUT'         → user logged out or session expired
-//   'TOKEN_REFRESHED'    → JWT was auto-refreshed (happens every ~hour)
-//   'USER_UPDATED'       → user's profile was changed (e.g. new password)
-//   'PASSWORD_RECOVERY'  → user clicked a password-reset email link
-//                          and the recovery session was established
+// After this succeeds, the user can sign in with their new password.
+// → Navigate back to login after calling this.
 //
-// We pass BOTH the event name and the session to the callback so the app
-// can react differently depending on WHY the auth state changed.
-// For example, on PASSWORD_RECOVERY we navigate to the reset-password
-// screen instead of the normal app tabs.
-//
-// The previous version discarded the event name:
-//   (_event, session) => callback(session)
-// Now we pass it through so the app can detect PASSWORD_RECOVERY.
-
-export function onAuthStateChange(
-  callback: (event: AuthChangeEvent, session: Session | null) => void,
+export async function confirmPasswordReset(
+  email: string,
+  code: string,
+  newPassword: string,
 ) {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange(
-    (event, session) => callback(event, session),
-  );
-  return subscription;
+  await confirmResetPassword({
+    username: email,
+    confirmationCode: code,
+    newPassword,
+  });
+}
+
+// ── Auth State Listener ───────────────────────────────────────────────────────
+//
+// Subscribes to Cognito auth events via Amplify's Hub (an internal event bus).
+//
+// Hub fires these events:
+//   'signedIn'      → user successfully signed in (tokens stored)
+//   'signedOut'     → user signed out, or session expired without refresh
+//   'tokenRefresh'  → idToken was auto-refreshed (every ~1 hour silently)
+//
+// We wrap Hub so AppContext keeps the same shape it had with Supabase:
+//   onAuthStateChange((event, session) => { ... })
+//
+// The callback receives:
+//   event   → 'signedIn' | 'signedOut' | 'tokenRefresh'
+//   session → { user } on sign-in/refresh, null on sign-out
+//
+// Returns { unsubscribe } — call it in the useEffect cleanup to stop listening.
+//
+// NOTE: 'PASSWORD_RECOVERY' is gone. Cognito's code-based reset flow doesn't
+// need it — the user never leaves the app, so no deep link event fires.
+//
+export function onAuthStateChange(
+  callback: (event: string, session: Session | null) => void,
+) {
+  const unlisten = Hub.listen('auth', async ({ payload }) => {
+    const { event } = payload;
+
+    if (event === 'signedIn' || event === 'tokenRefresh') {
+      try {
+        const cognitoUser = await getCurrentUser();
+        callback(event, { user: toUser(cognitoUser) });
+      } catch {
+        callback(event, null);
+      }
+    } else if (event === 'signedOut') {
+      callback('signedOut', null);
+    }
+    // Other events (e.g. 'signInWithRedirect', 'customOAuthState') are ignored
+  });
+
+  return { unsubscribe: unlisten };
 }

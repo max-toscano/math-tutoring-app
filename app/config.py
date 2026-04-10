@@ -21,6 +21,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
+# ── AWS Cognito (Auth) ────────────────────────────────────────────────────
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
+COGNITO_REGION = os.getenv("COGNITO_REGION", "us-east-1")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
+
 # ── RAG / Vector Store ────────────────────────────────────────────────────
 VECTOR_STORE_PATH = os.getenv("VECTOR_STORE_PATH", "./data/vectorstore")
 OPENSTAX_DATA_PATH = os.getenv("OPENSTAX_DATA_PATH", "./data/openstax")

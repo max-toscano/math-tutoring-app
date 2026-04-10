@@ -15,6 +15,9 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import { signUp } from '../../services/auth';
+import { validatePassword, validateDisplayName } from '../../utils/validation';
+import ValidationChecklist from '../../components/ValidationChecklist';
+import PasswordStrengthMeter from '../../components/PasswordStrengthMeter';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -25,15 +28,17 @@ export default function SignUpScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
+  const [displayNameFocused, setDisplayNameFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
 
   async function handleSignUp() {
     if (!email.trim() || !password) {
       setError('Please fill in all required fields.');
       return;
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    const pwResult = validatePassword(password);
+    if (!pwResult.minLength || !pwResult.hasUppercase || !pwResult.hasLowercase || !pwResult.hasNumber || !pwResult.hasSpecial) {
+      setError('Password does not meet all requirements. Check the checklist below the password field.');
       return;
     }
     if (password !== confirmPassword) {
@@ -43,13 +48,9 @@ export default function SignUpScreen() {
     setError('');
     setLoading(true);
     try {
-      const { user } = await signUp(email.trim(), password, displayName.trim() || undefined);
-
-      // Supabase may require email confirmation depending on project settings
-      if (user && !user.confirmed_at) {
-        setSuccess(true);
-      }
-      // If auto-confirmed, auth state change listener will navigate
+      const { username } = await signUp(email.trim(), password, displayName.trim() || undefined);
+      // Pass both email (for display) and username (UUID, required by Cognito for confirmSignUp/resend)
+      router.push({ pathname: '/(auth)/confirm-signup', params: { email: email.trim(), username } });
     } catch (e: any) {
       const msg = e?.message ?? 'Sign up failed. Please try again.';
       setError(msg);
@@ -59,27 +60,6 @@ export default function SignUpScreen() {
     } finally {
       setLoading(false);
     }
-  }
-
-  if (success) {
-    return (
-      <View style={[styles.container, styles.centerContent]}>
-        <View style={styles.successCircle}>
-          <Ionicons name="mail-outline" size={40} color={Colors.primary} />
-        </View>
-        <Text style={styles.successTitle}>Check your email</Text>
-        <Text style={styles.successText}>
-          We sent a confirmation link to {email}. Tap it to activate your account, then come back to sign in.
-        </Text>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.back()}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.buttonText}>Back to Sign In</Text>
-        </TouchableOpacity>
-      </View>
-    );
   }
 
   return (
@@ -120,10 +100,27 @@ export default function SignUpScreen() {
                   placeholderTextColor={Colors.textMuted}
                   value={displayName}
                   onChangeText={setDisplayName}
-                  autoCapitalize="words"
+                  autoCapitalize="none"
                   editable={!loading}
+                  onFocus={() => setDisplayNameFocused(true)}
+                  onBlur={() => setDisplayNameFocused(false)}
                 />
               </View>
+              {(() => {
+                const dnVisible = displayNameFocused || displayName.length > 0;
+                const dnVal = validateDisplayName(displayName);
+                return (
+                  <ValidationChecklist
+                    visible={dnVisible}
+                    items={[
+                      { label: 'At least 3 characters', passed: dnVal.minLength },
+                      { label: '20 characters max', passed: dnVal.maxLength },
+                      { label: 'No spaces', passed: dnVal.noSpaces },
+                      { label: 'Letters, numbers, and underscores only', passed: dnVal.validChars },
+                    ]}
+                  />
+                );
+              })()}
             </View>
 
             <View style={styles.inputGroup}>
@@ -150,18 +147,39 @@ export default function SignUpScreen() {
                 <Ionicons name="lock-closed-outline" size={20} color={Colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={[styles.input, { flex: 1 }]}
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   placeholderTextColor={Colors.textMuted}
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
                   autoComplete="new-password"
                   editable={!loading}
+                  onFocus={() => setPasswordFocused(true)}
+                  onBlur={() => setPasswordFocused(false)}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
                   <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textMuted} />
                 </TouchableOpacity>
               </View>
+              {(() => {
+                const pwVisible = passwordFocused || password.length > 0;
+                const pwVal = validatePassword(password);
+                return (
+                  <>
+                    <PasswordStrengthMeter visible={pwVisible} score={pwVal.strength} />
+                    <ValidationChecklist
+                      visible={pwVisible}
+                      items={[
+                        { label: 'At least 8 characters', passed: pwVal.minLength },
+                        { label: 'One uppercase letter', passed: pwVal.hasUppercase },
+                        { label: 'One lowercase letter', passed: pwVal.hasLowercase },
+                        { label: 'One number', passed: pwVal.hasNumber },
+                        { label: 'One special character (!@#$...)', passed: pwVal.hasSpecial },
+                      ]}
+                    />
+                  </>
+                );
+              })()}
             </View>
 
             <View style={styles.inputGroup}>
@@ -211,11 +229,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-  },
-  centerContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 28,
   },
   scroll: {
     flexGrow: 1,
@@ -324,29 +337,5 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: 14,
     fontWeight: '600',
-  },
-  // Success state
-  successCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  successTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  successText: {
-    fontSize: 15,
-    color: Colors.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-    maxWidth: 300,
   },
 });

@@ -26,6 +26,7 @@ import {
 } from '../../services/agent';
 import { useAppContext, type TutoringSession } from '../../context/AppContext';
 import { Colors } from '../../constants/Colors';
+import { pickRandomQuestions, type QuickQuestion } from '../../constants/quickQuestions';
 import ResponseBubble from '../../components/ResponseBubble';
 import SuggestionChips from '../../components/SuggestionChips';
 import ToolStatus from '../../components/ToolStatus';
@@ -137,6 +138,9 @@ export default function DashboardScreen() {
   // Mode + Attach state
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+
+  // Quick questions — randomized from pool each session
+  const [quickQuestions, setQuickQuestions] = useState<QuickQuestion[]>(() => pickRandomQuestions(4));
 
   // Animated dot indicator for "thinking"
   const dotAnim = useRef(new Animated.Value(0)).current;
@@ -407,6 +411,7 @@ export default function DashboardScreen() {
     setCurrentSessionId(null);
     setSessionSaved(false);
     setAttachMenuOpen(false);
+    setQuickQuestions(pickRandomQuestions(4));
     // Start fresh agent session
     startAgentSession()
       .then(({ session_id }) => setAgentSessionId(session_id))
@@ -563,24 +568,19 @@ export default function DashboardScreen() {
               <View style={styles.quickSection}>
                 <Text style={styles.quickLabel}>Or ask a question</Text>
                 <View style={styles.quickChips}>
-                  {[
-                    'How do I factor x² - 9?',
-                    'Explain the chain rule',
-                    'What is a derivative?',
-                    'Help me with trig identities',
-                  ].map((s) => (
+                  {quickQuestions.map((q, index) => (
                     <TouchableOpacity
-                      key={s}
+                      key={`${q.category}-${index}`}
                       style={styles.quickChip}
                       onPress={() => {
-                        setChatInput(s);
+                        setChatInput(q.text);
                         // Auto-send after a tick
                         setTimeout(() => handleSend(), 50);
                       }}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="chatbubble-outline" size={13} color={Colors.primary} />
-                      <Text style={styles.quickChipText}>{s}</Text>
+                      <Ionicons name={q.icon as any} size={13} color={Colors.primary} />
+                      <Text style={styles.quickChipText} numberOfLines={1}>{q.text}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
