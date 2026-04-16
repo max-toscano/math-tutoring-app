@@ -84,6 +84,17 @@ export interface CloseSessionResponse {
 }
 
 /**
+ * Parse a Response as JSON, throwing a readable error if it fails.
+ */
+async function parseJson<T>(response: Response): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error('Received an unexpected response from the server. Please try again.');
+  }
+}
+
+/**
  * Start a new tutoring session.
  * Call this when the user opens the Tutor tab or starts a new chat.
  */
@@ -91,7 +102,9 @@ export async function startAgentSession(): Promise<SessionResponse> {
   const response = await apiFetch('/chat/start-session', {
     method: 'POST',
   });
-  return response.json();
+  const data = await parseJson<SessionResponse>(response);
+  if (!data.session_id) throw new Error('Failed to start session — no session ID returned.');
+  return data;
 }
 
 /**
@@ -119,7 +132,13 @@ export async function sendAgentMessage(
     body: JSON.stringify(body),
   });
 
-  return response.json();
+  const data = await parseJson<AgentResponse>(response);
+  // Normalise optional arrays so callers never get undefined
+  data.tools_used = data.tools_used ?? [];
+  data.graphs = data.graphs ?? [];
+  data.suggestions = data.suggestions ?? [];
+  data.validation_flags = data.validation_flags ?? [];
+  return data;
 }
 
 /**
@@ -133,5 +152,5 @@ export async function closeAgentSession(
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId }),
   });
-  return response.json();
+  return parseJson<CloseSessionResponse>(response);
 }

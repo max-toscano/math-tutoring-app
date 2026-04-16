@@ -6,7 +6,7 @@
  * Native: uses react-native-webview loading the Desmos API
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/Colors';
@@ -73,7 +73,16 @@ function buildDesmosHtml(expressions: DesmosExpression[], bounds?: DesmosBounds)
   <div id="calculator"></div>
   <div id="error"></div>
   <script>
+    function reportError(msg) {
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = msg;
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'error', message: msg }));
+      }
+    }
+
     try {
+      if (typeof Desmos === 'undefined') throw new Error('Desmos failed to load — check network connection.');
       var elt = document.getElementById('calculator');
       var calculator = Desmos.GraphingCalculator(elt, {
         expressionsCollapsed: true,
@@ -87,8 +96,7 @@ function buildDesmosHtml(expressions: DesmosExpression[], bounds?: DesmosBounds)
       ${exprLines}
       ${boundsJs}
     } catch(e) {
-      document.getElementById('error').style.display = 'block';
-      document.getElementById('error').textContent = 'Graph error: ' + e.message;
+      reportError('Graph error: ' + e.message);
     }
   </script>
 </body>
@@ -97,12 +105,25 @@ function buildDesmosHtml(expressions: DesmosExpression[], bounds?: DesmosBounds)
 
 export default function DesmosGraph({ expressions, bounds, graphType }: DesmosGraphProps) {
   const [fullScreen, setFullScreen] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
   const html = buildDesmosHtml(expressions, bounds);
+
+  const handleGraphError = useCallback((msg: string) => {
+    setGraphError(msg);
+  }, []);
 
   return (
     <View style={styles.container}>
       <View style={styles.graphCard}>
-        <GraphView html={html} height={280} />
+        {graphError ? (
+          <View style={styles.errorContainer}>
+            <Ionicons name="warning-outline" size={24} color="#E57373" />
+            <Text style={styles.errorText}>Could not render graph</Text>
+            <Text style={styles.errorSubtext}>{graphError}</Text>
+          </View>
+        ) : (
+          <GraphView html={html} height={280} onError={handleGraphError} />
+        )}
         <View style={styles.footer}>
           <View style={styles.footerLeft}>
             <Ionicons name="analytics-outline" size={14} color="#999" />
@@ -138,14 +159,22 @@ export default function DesmosGraph({ expressions, bounds, graphType }: DesmosGr
               <Ionicons name="close" size={24} color={Colors.text || '#333'} />
             </TouchableOpacity>
           </View>
-          <GraphView html={html} height="100%" />
+          <GraphView html={html} height="100%" onError={handleGraphError} />
         </View>
       </Modal>
     </View>
   );
 }
 
-function GraphView({ html, height }: { html: string; height: number | string }) {
+function GraphView({
+  html,
+  height,
+  onError,
+}: {
+  html: string;
+  height: number | string;
+  onError?: (msg: string) => void;
+}) {
   if (Platform.OS === 'web') {
     return (
       // @ts-ignore
@@ -185,6 +214,13 @@ function GraphView({ html, height }: { html: string; height: number | string }) 
       originWhitelist={['*']}
       scrollEnabled={false}
       mixedContentMode="always"
+      onError={() => onError?.('WebView failed to load.')}
+      onMessage={(event: any) => {
+        try {
+          const data = JSON.parse(event.nativeEvent.data);
+          if (data.type === 'error') onError?.(data.message);
+        } catch {}
+      }}
     />
   );
 }
@@ -263,5 +299,23 @@ const styles = StyleSheet.create({
   },
   modalClose: {
     padding: 4,
+  },
+  errorContainer: {
+    height: 280,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    backgroundColor: '#FFF8F8',
+  },
+  errorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#C62828',
+  },
+  errorSubtext: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
   },
 });

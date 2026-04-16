@@ -28,11 +28,11 @@ import { getToken } from './auth';
 // EXPO_PUBLIC_ prefix is required by Expo — any env var the frontend needs
 // must have this prefix or Expo won't include it in the build.
 //
-// Falls back to localhost:8002 for local development.
+// Falls back to localhost:8001 for local development.
 // In production you'd set this to your deployed backend URL.
 //
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_TUTORING_API_URL ?? 'http://localhost:8002';
+  process.env.EXPO_PUBLIC_TUTORING_API_URL ?? 'http://localhost:8001';
 
 // ── getAccessToken ────────────────────────────────────────────────────────────
 //

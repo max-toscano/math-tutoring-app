@@ -118,6 +118,9 @@ export default function DashboardScreen() {
   // Agent session
   const [agentSessionId, setAgentSessionId] = useState<string | null>(null);
 
+  // Stores the last text sent so the Retry button can re-send it after an error
+  const lastAttemptedMessage = useRef<string>('');
+
   useEffect(() => {
     startAgentSession()
       .then(({ session_id }) => {
@@ -212,6 +215,8 @@ export default function DashboardScreen() {
         conversationHistory,
       });
 
+      if (!result.response) throw new Error('The AI returned an empty response. Please try again.');
+
       const assistantMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -237,8 +242,10 @@ export default function DashboardScreen() {
   }
 
   // ── Send message (text, photo, or both) ──
-  async function handleSend() {
-    const text = chatInput.trim();
+  // `overrideText` lets callers pass text directly instead of relying on
+  // chatInput state, which may not have updated yet (stale closure).
+  async function handleSend(overrideText?: string) {
+    const text = (overrideText ?? chatInput).trim();
     const photo = pendingPhoto;
 
     if ((!text && !photo) || chatLoading || analyzing) return;
@@ -250,8 +257,9 @@ export default function DashboardScreen() {
       imageUri: photo ?? undefined,
     };
 
+    lastAttemptedMessage.current = text;
     setChatMessages((prev) => [...prev, userMsg]);
-    setChatInput('');
+    setChatInput('');  // clear input regardless of overrideText
     setPendingPhoto(null);
     setPendingPhotoBase64(null);
     setChatError(null);
@@ -271,6 +279,8 @@ export default function DashboardScreen() {
           conversationHistory,
           imageBase64: pendingPhotoBase64,
         });
+
+        if (!result.response) throw new Error('The AI returned an empty response. Please try again.');
 
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -304,6 +314,8 @@ export default function DashboardScreen() {
           selectedMode: selectedMode ?? undefined,
           conversationHistory,
         });
+
+        if (!result.response) throw new Error('The AI returned an empty response. Please try again.');
 
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -572,11 +584,7 @@ export default function DashboardScreen() {
                     <TouchableOpacity
                       key={`${q.category}-${index}`}
                       style={styles.quickChip}
-                      onPress={() => {
-                        setChatInput(q.text);
-                        // Auto-send after a tick
-                        setTimeout(() => handleSend(), 50);
-                      }}
+                      onPress={() => handleSend(q.text)}
                       activeOpacity={0.7}
                     >
                       <Ionicons name={q.icon as any} size={13} color={Colors.primary} />
@@ -800,7 +808,7 @@ export default function DashboardScreen() {
                 <View style={styles.chatErrorCard}>
                   <Ionicons name="alert-circle-outline" size={16} color={Colors.secondary} />
                   <Text style={styles.chatErrorText}>{chatError}</Text>
-                  <TouchableOpacity onPress={handleSend}>
+                  <TouchableOpacity onPress={() => handleSend(lastAttemptedMessage.current || undefined)}>
                     <Text style={styles.retryText}>Retry</Text>
                   </TouchableOpacity>
                 </View>
@@ -918,12 +926,12 @@ export default function DashboardScreen() {
             <TouchableOpacity
               style={[
                 styles.sendBtn,
-                (!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing
+                (!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing || !agentSessionId
                   ? styles.sendBtnDisabled
                   : null,
               ]}
               onPress={handleSend}
-              disabled={(!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing}
+              disabled={(!chatInput.trim() && !pendingPhoto) || chatLoading || analyzing || !agentSessionId}
               activeOpacity={0.7}
             >
               <Ionicons name="arrow-up" size={20} color={Colors.white} />

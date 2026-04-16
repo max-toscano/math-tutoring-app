@@ -75,9 +75,16 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "http://localhost:8081",       # Expo web dev server (default port)
     "http://localhost:19006",      # Expo web alternate dev port
-    "http://192.168.1.27:8081",   # Your local network IP (phone testing on WiFi)
     "http://localhost:8001",       # Backend itself (for the built-in chat.html UI)
 ]
+
+# For phone/tablet testing on the same WiFi network, set LOCAL_IP in your .env:
+#   LOCAL_IP=192.168.1.X   (run `ipconfig` on Windows or `ifconfig` on Mac to find yours)
+# This avoids CORS errors when the Expo app runs on a physical device.
+_local_ip = os.getenv("LOCAL_IP")
+if _local_ip:
+    ALLOWED_ORIGINS.append(f"http://{_local_ip}:8081")
+    ALLOWED_ORIGINS.append(f"http://{_local_ip}:19006")
 
 # On Railway (or any deployment), set ALLOWED_ORIGIN env var to your frontend URL.
 # Railway auto-sets RAILWAY_PUBLIC_DOMAIN for you.
